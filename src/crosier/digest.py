@@ -4,7 +4,7 @@ call) reads this digest, never the raw transcript."""
 
 import subprocess
 
-DIGEST_PROMPT_TEMPLATE = """You are compressing a slice of an AI coding session for a fresh reviewer who will never see the full transcript. Read the session excerpt below and produce ONLY the following markdown, nothing else:
+DIGEST_PROMPT_TEMPLATE = """You are compressing a slice of an AI coding session for a fresh reviewer who will never see the full transcript. Read the transcript excerpt provided on stdin and produce ONLY the following markdown, nothing else:
 
 ## Current task
 <one paragraph>
@@ -22,21 +22,20 @@ DIGEST_PROMPT_TEMPLATE = """You are compressing a slice of an AI coding session 
 ## Tool actions taken (compressed)
 - <summary, not a full log>
 
-Keep the whole output under 2000 tokens. Session excerpt:
-
-{excerpt}
+Keep the whole output under 2000 tokens.
 """
 
 
-def build_digest_prompt(excerpt: str) -> str:
-    return DIGEST_PROMPT_TEMPLATE.format(excerpt=excerpt)
+def build_digest_prompt() -> str:
+    return DIGEST_PROMPT_TEMPLATE
 
 
 def generate_digest(excerpt: str, model: str = "sonnet", timeout: int = 45) -> str | None:
-    prompt = build_digest_prompt(excerpt)
+    prompt = build_digest_prompt()
     try:
         result = subprocess.run(
             ["claude", "-p", prompt, "--model", model],
+            input=excerpt,
             capture_output=True,
             text=True,
             timeout=timeout,

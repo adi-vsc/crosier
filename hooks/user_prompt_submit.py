@@ -14,14 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from crosier.announce import format_announcement, format_backoff_notice
 from crosier.config import load_config
+from crosier.constants import EXCERPT_CHAR_CAP
 from crosier.digest import generate_digest
 from crosier.errors import record_failure, should_disable
 from crosier.heuristic import should_escalate
 from crosier.state import load_state, save_state
 from crosier.transcript import delta_since, delta_text, extract_tool_calls, read_transcript_lines
 from crosier.verdict import generate_verdict
-
-EXCERPT_CHAR_CAP = 40_000
 
 
 def main() -> int:
@@ -47,7 +46,6 @@ def main() -> int:
     text = delta_text(new_lines)
     tool_calls = [call for entry in new_lines for call in extract_tool_calls(entry)]
 
-    state.last_line_index = len(lines)
     state.total_turns += 1
     state.turns_since_check += 1
     state.chars_since_check += len(text)
@@ -71,6 +69,7 @@ def main() -> int:
         save_state(project_root, session_id, state)
         return 0
 
+    state.last_line_index = len(lines)
     state.consecutive_failures = 0
     state.turns_since_check = 0
     state.chars_since_check = 0

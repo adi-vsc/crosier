@@ -2,6 +2,7 @@
 call is a fresh process, so nothing survives in memory between turns)."""
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -38,4 +39,6 @@ def load_state(project_root: Path, session_id: str) -> SessionState:
 def save_state(project_root: Path, session_id: str, state: SessionState) -> None:
     path = _state_path(project_root, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(state)), encoding="utf-8")
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(asdict(state)), encoding="utf-8")
+    os.replace(tmp_path, path)

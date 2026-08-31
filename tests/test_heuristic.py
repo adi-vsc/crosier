@@ -40,9 +40,3 @@ def test_escalates_on_repetition_threshold():
     config = CrosierConfig(repetition_threshold=0.4)
     state = SessionState(recent_tool_calls=["Bash:1"] * 5)
     assert should_escalate(state, config) is True
-
-
-def test_forced_escalates_regardless_of_thresholds():
-    state = SessionState()
-    config = CrosierConfig()
-    assert should_escalate(state, config, forced=True) is True

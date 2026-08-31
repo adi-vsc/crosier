@@ -13,13 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from crosier.announce import format_announcement, format_backoff_notice
 from crosier.config import load_config
+from crosier.constants import EXCERPT_CHAR_CAP
 from crosier.digest import generate_digest
 from crosier.errors import record_failure, should_disable
 from crosier.state import load_state, save_state
 from crosier.transcript import delta_since, delta_text, read_transcript_lines
 from crosier.verdict import generate_verdict
-
-EXCERPT_CHAR_CAP = 40_000
 
 
 def main() -> int:
@@ -43,8 +42,10 @@ def main() -> int:
     lines = read_transcript_lines(transcript_path)
     new_lines = delta_since(lines, state.last_line_index)
     text = delta_text(new_lines)
-    state.last_line_index = len(lines)
 
+    # PreCompact never increments total_turns (it isn't itself a user turn);
+    # this reports the count of user turns genuinely completed so far, never
+    # a fabricated/incremented number.
     turn_number = state.total_turns
     excerpt = text[-EXCERPT_CHAR_CAP:]
     digest = generate_digest(excerpt, model=config.digest_model)
@@ -59,6 +60,7 @@ def main() -> int:
         save_state(project_root, session_id, state)
         return 0
 
+    state.last_line_index = len(lines)
     state.consecutive_failures = 0
     state.turns_since_check = 0
     state.chars_since_check = 0

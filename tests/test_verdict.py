@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 from crosier.verdict import build_verdict_prompt, generate_verdict, parse_verdict
 
 
-def test_build_verdict_prompt_includes_digest():
-    prompt = build_verdict_prompt("## Current task\nfoo")
-    assert "## Current task\nfoo" in prompt
+def test_build_verdict_prompt_references_stdin():
+    prompt = build_verdict_prompt()
+    assert "stdin" in prompt
     assert "proceed" in prompt
     assert "flag" in prompt
 
@@ -53,6 +53,18 @@ def test_parse_verdict_returns_none_on_invalid_confidence():
     assert parse_verdict(raw) is None
 
 
+def test_parse_verdict_recovers_json_from_surrounding_prose():
+    raw = (
+        "Sure, here is my assessment:\n"
+        '{"status": "flag", "confidence": "medium", "flagged_claim": "x", '
+        '"reason": "y", "suggested_check": "z"}\n'
+        "Let me know if you need anything else!"
+    )
+    result = parse_verdict(raw)
+    assert result["status"] == "flag"
+    assert result["flagged_claim"] == "x"
+
+
 @patch("crosier.verdict.subprocess.run")
 def test_generate_verdict_returns_parsed_dict_on_success(mock_run):
     mock_run.return_value = MagicMock(
@@ -61,6 +73,10 @@ def test_generate_verdict_returns_parsed_dict_on_success(mock_run):
     )
     result = generate_verdict("a digest", model="sonnet")
     assert result["status"] == "proceed"
+    kwargs = mock_run.call_args.kwargs
+    args = mock_run.call_args.args[0]
+    assert kwargs["input"] == "a digest"
+    assert "a digest" not in args
 
 
 @patch("crosier.verdict.subprocess.run")

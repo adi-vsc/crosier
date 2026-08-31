@@ -5,14 +5,11 @@ history. This is the actual "fresh eyes" step."""
 import json
 import subprocess
 
-VERDICT_PROMPT_TEMPLATE = """You are an independent reviewer with no memory of this session beyond the digest below. Decide whether the work described still looks on track, or whether something looks like it has drifted from a sound premise. Respond with ONLY a JSON object, nothing else, no markdown fences, in exactly this shape:
+VERDICT_PROMPT_TEMPLATE = """You are an independent reviewer with no memory of this session beyond the digest provided on stdin below. Decide whether the work described still looks on track, or whether something looks like it has drifted from a sound premise. Respond with ONLY a JSON object, nothing else, no markdown fences, in exactly this shape:
 
-{{"status": "proceed" or "flag", "confidence": "low" or "medium" or "high", "flagged_claim": string or null, "reason": string or null, "suggested_check": string or null}}
+{"status": "proceed" or "flag", "confidence": "low" or "medium" or "high", "flagged_claim": string or null, "reason": string or null, "suggested_check": string or null}
 
 "proceed" is a normal, common, expected result — only use "flag" for a real, specific concern, never to justify your own existence.
-
-Digest:
-{digest}
 """
 
 VALID_STATUS = {"proceed", "flag"}
@@ -20,8 +17,38 @@ VALID_CONFIDENCE = {"low", "medium", "high"}
 OPTIONAL_KEYS = ("flagged_claim", "reason", "suggested_check")
 
 
-def build_verdict_prompt(digest: str) -> str:
-    return VERDICT_PROMPT_TEMPLATE.format(digest=digest)
+def build_verdict_prompt() -> str:
+    return VERDICT_PROMPT_TEMPLATE
+
+
+def _extract_json_object(text: str) -> str | None:
+    """Scan for the first top-level {...} substring, respecting quoted strings
+    so braces inside string values don't unbalance the depth count."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
 
 
 def parse_verdict(raw: str) -> dict | None:
@@ -34,7 +61,13 @@ def parse_verdict(raw: str) -> dict | None:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return None
+        candidate = _extract_json_object(text)
+        if candidate is None:
+            return None
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
     if not isinstance(data, dict):
         return None
     if data.get("status") not in VALID_STATUS:
@@ -47,10 +80,11 @@ def parse_verdict(raw: str) -> dict | None:
 
 
 def generate_verdict(digest: str, model: str = "sonnet", timeout: int = 45) -> dict | None:
-    prompt = build_verdict_prompt(digest)
+    prompt = build_verdict_prompt()
     try:
         result = subprocess.run(
             ["claude", "-p", prompt, "--model", model],
+            input=digest,
             capture_output=True,
             text=True,
             timeout=timeout,

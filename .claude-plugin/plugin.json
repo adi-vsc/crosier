@@ -1,0 +1,21 @@
+{
+  "name": "crosier",
+  "version": "0.1.0",
+  "description": "Install-and-forget direction checks for long Claude Code sessions. A fresh, zero-context Claude instance periodically reviews a compressed digest of your session and flags drift before it compounds.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\""}
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\""}
+        ]
+      }
+    ]
+  }
+}

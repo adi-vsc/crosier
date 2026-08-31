@@ -6,14 +6,14 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\""}
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\"", "timeout": 100}
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\""}
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\"", "timeout": 100}
         ]
       }
     ]

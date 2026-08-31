@@ -2,12 +2,31 @@
 Code settings.json, for users installing outside a plugin marketplace flow."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 
 def _hook_entry(command: str) -> dict:
-    return {"hooks": [{"type": "command", "command": command}]}
+    return {"hooks": [{"type": "command", "command": command, "timeout": 100}]}
+
+
+def _resolve_python() -> str:
+    """Probe for a working Python interpreter.
+
+    ``python3`` resolves to a non-functional Microsoft Store alias stub on
+    many stock Windows installs (python.org installs ship ``python.exe``
+    only), so we can't hardcode it. Try ``python3``, then ``python``, then
+    the Windows ``py -3`` launcher, and use whichever actually runs.
+    """
+    for candidate in (["python3"], ["python"], ["py", "-3"]):
+        try:
+            result = subprocess.run(candidate + ["--version"], capture_output=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return " ".join(candidate)
+    return "python3"
 
 
 def merge_hooks_into_settings(settings_path: Path, plugin_root: Path) -> None:
@@ -19,9 +38,10 @@ def merge_hooks_into_settings(settings_path: Path, plugin_root: Path) -> None:
 
     data.setdefault("hooks", {})
 
+    python_cmd = _resolve_python()
     plugin_root_posix = Path(plugin_root).as_posix()
-    ups_command = f'python3 "{plugin_root_posix}/hooks/user_prompt_submit.py"'
-    precompact_command = f'python3 "{plugin_root_posix}/hooks/pre_compact.py"'
+    ups_command = f'{python_cmd} "{plugin_root_posix}/hooks/user_prompt_submit.py"'
+    precompact_command = f'{python_cmd} "{plugin_root_posix}/hooks/pre_compact.py"'
 
     for event, command in (("UserPromptSubmit", ups_command), ("PreCompact", precompact_command)):
         existing = data["hooks"].setdefault(event, [])

@@ -18,9 +18,7 @@ def tool_repetition_rate(recent_tool_calls: list) -> float:
     return repeated / len(window)
 
 
-def should_escalate(state: SessionState, config: CrosierConfig, forced: bool = False) -> bool:
-    if forced:
-        return True
+def should_escalate(state: SessionState, config: CrosierConfig) -> bool:
     if state.turns_since_check >= config.turn_threshold:
         return True
     if state.chars_since_check >= config.token_threshold * 4:

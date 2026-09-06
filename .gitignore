@@ -8,3 +8,5 @@ build/
 .venv/
 graphify-out/
 scope.md
+benchmark/run.log
+benchmark/results.json

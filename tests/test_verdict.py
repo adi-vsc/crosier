@@ -255,3 +255,34 @@ def test_generate_verdict_returns_none_when_the_call_fails(mock_run):
 def test_generate_verdict_returns_none_on_unparseable_output(mock_run):
     mock_run.return_value = {"result": "I could not decide.", "structured_output": None}
     assert generate_verdict(EXCERPT, model="sonnet") is None
+
+
+def test_prompt_separates_a_blocker_from_a_loop():
+    # Benchmark false positive: three identical failing reads of a file the
+    # agent then says it needs and cannot work around were flagged `loop`.
+    # A loop needs an unused alternative and no stated obstacle.
+    prompt = build_verdict_prompt()
+    assert "no stated obstacle" in prompt
+    assert "blocker on a hard dependency" in prompt
+
+
+def test_prompt_limits_unverified_claim_to_verification_outcomes():
+    # Benchmark false positives: an argument citing figures from papers the
+    # agent read earlier, and a summary of edits made before the window, were
+    # both flagged `unverified_claim` because no tool_result "backed" them.
+    # Only verification outcomes (tests, build, lint, command output) have to
+    # be in view; a window is a slice of the session, not all of it.
+    prompt = build_verdict_prompt()
+    assert "verification outcome" in prompt
+    assert "an argument is not an unverified claim" in prompt
+    assert "Work done before the window" in prompt
+
+
+def test_evidence_match_treats_backticks_as_quotes():
+    # sanitize_field rewrites backticks to quotes on the way out, so a quote
+    # of any line holding code never matched the excerpt and every such flag
+    # was demoted to low. Seen on the benchmark: a real judgement hidden
+    # behind an artefact.
+    excerpt = "[assistant] Housekeep skill (`SKILL.md`) now has a `Graphify` section."
+    verdict = verify_evidence(_flag("skill ('SKILL.md') now has a 'Graphify' section"), excerpt)
+    assert verdict["evidence_verified"] is True

@@ -1,49 +1,192 @@
-"""Compress a session excerpt into a short digest via a headless `claude -p`
-call. This is the token-efficiency lever: everything downstream (the verdict
-call) reads this digest, never the raw transcript."""
+"""Compress a slice of a session into the structured excerpt the reviewer reads.
 
-import subprocess
-
-DIGEST_PROMPT_TEMPLATE = """You are compressing a slice of an AI coding session for a fresh reviewer who will never see the full transcript. Read the transcript excerpt provided on stdin and produce ONLY the following markdown, nothing else:
-
-## Current task
-<one paragraph>
-
-## Decisions made since last check
-- <decision> (source: self | user)
-
-## Assumptions currently being built on
-- <most load-bearing, least defensible assumption>
-- <second least defensible assumption>
-
-## User corrections/redirections since last check
-- <any time the user corrected or redirected the agent, or "none">
-
-## Tool actions taken (compressed)
-- <summary, not a full log>
-
-Keep the whole output under 2000 tokens.
+This is done mechanically, not by a model. A summarising model that reads the
+agent's own framing inherits it — "tests pass" becomes a fact in the summary —
+and a reviewer cannot verify a quote against a summary. Structure is what a
+zero-context reader actually lacks: who said what, what ran, what came back.
+Each record is labelled, oversized material is cut to head and tail with its
+true size stated, noise entries are dropped, and the original request is pinned
+on top so "off-goal" is a judgement the reviewer can make at all.
 """
 
+import json
+import re
 
-def build_digest_prompt() -> str:
-    return DIGEST_PROMPT_TEMPLATE
+from crosier.constants import EXCERPT_CHAR_CAP
+
+GOAL_CHAR_CAP = 800
+USER_CHAR_CAP = 2000
+ASSISTANT_CHAR_CAP = 3000
+TOOL_USE_CHAR_CAP = 300
+TOOL_ARG_VALUE_CAP = 120
+TOOL_RESULT_HEAD = 500
+TOOL_RESULT_TAIL = 200
+
+_COMMAND_NAME_RE = re.compile(r"<command-name>\s*(\S+?)\s*</command-name>")
+_COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 
 
-def generate_digest(excerpt: str, model: str = "sonnet", timeout: int = 45) -> str | None:
-    prompt = build_digest_prompt()
-    try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--model", model],
-            input=excerpt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+def _cap(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _head_tail(text: str) -> str:
+    text = text.strip()
+    if len(text) <= TOOL_RESULT_HEAD + TOOL_RESULT_TAIL:
+        return text
+    return text[:TOOL_RESULT_HEAD].rstrip() + "\n…\n" + text[-TOOL_RESULT_TAIL:].lstrip()
+
+
+def _compact_args(tool_input) -> str:
+    """Every argument survives, cut to a preview each: a Write's `content` must
+    not push its `file_path` out of the record."""
+    if not isinstance(tool_input, dict):
+        return _cap(json.dumps(tool_input), TOOL_USE_CHAR_CAP)
+    compact = {
+        key: (_cap(value, TOOL_ARG_VALUE_CAP) if isinstance(value, str) else value)
+        for key, value in sorted(tool_input.items())
+    }
+    return _cap(json.dumps(compact, ensure_ascii=False), TOOL_USE_CHAR_CAP)
+
+
+def _block_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    return ""
+
+
+def _is_noise(entry: dict) -> bool:
+    if entry.get("isSidechain") or entry.get("isMeta"):
+        return True
+    return not isinstance(entry.get("message"), dict)
+
+
+def _user_record(entry: dict, text: str) -> tuple | None:
+    """Classify a user-authored text. None means drop it."""
+    if entry.get("isCompactSummary"):
+        return ("compaction summary", _cap(text, USER_CHAR_CAP))
+    stripped = text.strip()
+    if stripped.startswith(("<command-name>", "<command-message>")):
+        # A prompt typed as `/skill the real request`: the request is the args.
+        args = _COMMAND_ARGS_RE.search(stripped)
+        if args and args.group(1).strip():
+            return ("user", _cap(args.group(1), USER_CHAR_CAP))
+        match = _COMMAND_NAME_RE.search(stripped)
+        return ("user command", match.group(1)) if match else None
+    if stripped.startswith("<local-command"):
         return None
-    if result.returncode != 0:
+    if not stripped:
         return None
-    output = (result.stdout or "").strip()
-    return output or None
+    if stripped.startswith("/") and "\n" not in stripped and len(stripped) <= 60:
+        return ("user command", stripped)
+    return ("user", _cap(text, USER_CHAR_CAP))
+
+
+def _records(lines: list, counter: dict) -> list:
+    """Flatten transcript entries into (label, text) records, in order.
+
+    `counter` maps tool_use ids to a running number so a result can be tied
+    back to the call that produced it, numbered from the start of the session.
+    """
+    out = []
+    for entry in lines:
+        if not isinstance(entry, dict) or _is_noise(entry):
+            continue
+        message = entry["message"]
+        content = message.get("content")
+        role = message.get("role")
+        if isinstance(content, str):
+            if role == "user":
+                rec = _user_record(entry, content)
+                if rec:
+                    out.append(rec)
+            elif role == "assistant" and content.strip():
+                out.append(("assistant", _cap(content, ASSISTANT_CHAR_CAP)))
+            continue
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind == "text":
+                text = block.get("text", "")
+                if not text.strip():
+                    continue
+                if role == "user":
+                    rec = _user_record(entry, text)
+                    if rec:
+                        out.append(rec)
+                else:
+                    out.append(("assistant", _cap(text, ASSISTANT_CHAR_CAP)))
+            elif kind == "tool_use":
+                number = counter.setdefault(block.get("id"), len(counter) + 1)
+                name = block.get("name", "unknown")
+                out.append((f"tool_use #{number} {name}", _compact_args(block.get("input", {}))))
+            elif kind == "tool_result":
+                number = counter.get(block.get("tool_use_id"), "?")
+                text = _block_text(block.get("content", ""))
+                flag = " ERROR" if block.get("is_error") else ""
+                out.append((f"tool_result #{number}{flag} | {len(text)} chars", _head_tail(text)))
+    return out
+
+
+def _user_prompts(lines: list) -> list:
+    """Real user requests only: no command echoes, no summaries, no meta."""
+    found = []
+    for entry in lines:
+        if not isinstance(entry, dict) or _is_noise(entry):
+            continue
+        message = entry["message"]
+        if message.get("role") != "user" or not isinstance(message.get("content"), str):
+            continue
+        rec = _user_record(entry, message["content"])
+        if rec and rec[0] == "user":
+            found.append(rec[1])
+    return found
+
+
+def _render(label: str, text: str) -> str:
+    return f"[{label}] {text}"
+
+
+def build_excerpt(lines: list, since_index: int, char_cap: int = EXCERPT_CHAR_CAP) -> str:
+    """The reviewer's entire view of the session.
+
+    Records from `since_index` onward are kept newest-first under `char_cap`;
+    the goal (first real user request) is pinned above them, and the latest
+    user instruction is carried in if the window itself holds no user turn.
+    """
+    counter: dict = {}
+    _records(lines[:since_index], counter)  # number tool calls from the session start
+    window = _records(lines[since_index:], counter)
+
+    kept: list = []
+    used = 0
+    for label, text in reversed(window):
+        rendered = _render(label, text)
+        if kept and used + len(rendered) > char_cap:
+            break
+        kept.append(rendered)
+        used += len(rendered) + 2
+    kept.reverse()
+
+    header = []
+    prompts = _user_prompts(lines)
+    goal = _cap(prompts[0], GOAL_CHAR_CAP) if prompts else None
+    if goal is not None:
+        header.append(_render("goal", goal))
+    if not any(label == "user" for label, _ in window):
+        earlier = _user_prompts(lines[:since_index])
+        if earlier and earlier[-1] != prompts[0]:
+            header.append(_render("latest user instruction", earlier[-1]))
+
+    parts = header + kept
+    return "\n\n".join(parts) if parts else ""

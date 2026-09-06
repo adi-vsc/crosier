@@ -2,48 +2,67 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from crosier.state import SessionState, load_state, save_state, _state_path
+import pytest
+
+from crosier.state import SessionState, load_state, save_state, state_path
 
 
-def test_load_state_returns_fresh_defaults_when_no_file(tmp_path: Path):
-    state = load_state(tmp_path, "session-abc")
-    assert state == SessionState()
+@pytest.fixture(autouse=True)
+def _home(monkeypatch, tmp_path):
+    monkeypatch.setenv("CROSIER_HOME", str(tmp_path))
+    return tmp_path
 
 
-def test_save_then_load_roundtrips(tmp_path: Path):
+def test_load_state_returns_fresh_defaults_when_no_file():
+    assert load_state("session-abc") == SessionState()
+
+
+def test_save_then_load_roundtrips():
     state = SessionState(
         last_line_index=12,
         total_turns=5,
+        calls_since_check=7,
         turns_since_check=5,
         chars_since_check=4000,
         recent_tool_calls=["Read:111", "Edit:222"],
         consecutive_failures=1,
+        last_flag="the endpoint is idempotent",
         disabled_for_session=False,
     )
-    save_state(tmp_path, "session-abc", state)
-    loaded = load_state(tmp_path, "session-abc")
-    assert loaded == state
+    save_state("session-abc", state)
+    assert load_state("session-abc") == state
 
 
-def test_state_is_isolated_per_session_id(tmp_path: Path):
-    save_state(tmp_path, "session-a", SessionState(total_turns=3))
-    save_state(tmp_path, "session-b", SessionState(total_turns=9))
-    assert load_state(tmp_path, "session-a").total_turns == 3
-    assert load_state(tmp_path, "session-b").total_turns == 9
+def test_tokens_at_last_check_roundtrips():
+    save_state("session-tok", SessionState(tokens_at_last_check=54_000))
+    assert load_state("session-tok").tokens_at_last_check == 54_000
 
 
-def test_save_state_leaves_no_temp_file_behind(tmp_path: Path):
-    save_state(tmp_path, "session-abc", SessionState(total_turns=1))
-    path = _state_path(tmp_path, "session-abc")
-    tmp_path_file = path.with_name(path.name + ".tmp")
+def test_unknown_fields_from_an_older_version_are_ignored():
+    path = state_path("session-old")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"total_turns": 3, "retired_field": 1}', encoding="utf-8")
+    assert load_state("session-old").total_turns == 3
+
+
+def test_state_is_isolated_per_session_id():
+    save_state("session-a", SessionState(total_turns=3))
+    save_state("session-b", SessionState(total_turns=9))
+    assert load_state("session-a").total_turns == 3
+    assert load_state("session-b").total_turns == 9
+
+
+def test_save_state_leaves_no_temp_file_behind():
+    save_state("session-abc", SessionState(total_turns=1))
+    path = state_path("session-abc")
     assert path.exists()
-    assert not tmp_path_file.exists()
+    assert not path.with_name(path.name + ".tmp").exists()
 
 
-def test_save_state_writes_via_atomic_replace(tmp_path: Path):
-    path = _state_path(tmp_path, "session-abc")
+def test_save_state_writes_via_atomic_replace():
+    path = state_path("session-abc")
     with patch("crosier.state.os.replace") as mock_replace:
-        save_state(tmp_path, "session-abc", SessionState(total_turns=1))
+        save_state("session-abc", SessionState(total_turns=1))
     mock_replace.assert_called_once()
     src, dst = mock_replace.call_args[0]
     assert Path(dst) == path

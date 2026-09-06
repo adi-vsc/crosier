@@ -1,6 +1,6 @@
 [project]
 name = "crosier"
-version = "0.1.0"
+version = "0.2.0"
 description = "Install-and-forget direction checks for long Claude Code sessions — a fresh, zero-context Claude instance periodically reviews a compressed digest of your session and flags drift before it compounds."
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,3 +16,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

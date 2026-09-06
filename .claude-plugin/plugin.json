@@ -1,19 +1,49 @@
 {
   "name": "crosier",
-  "version": "0.1.0",
-  "description": "Install-and-forget direction checks for long Claude Code sessions. A fresh, zero-context Claude instance periodically reviews a compressed digest of your session and flags drift before it compounds.",
+  "version": "0.2.0",
+  "description": "Install-and-forget direction checks for long Claude Code sessions. A fresh, zero-context Claude instance periodically reviews a structured excerpt of your session and flags drift inside the turn, before the answer is done.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt_submit.py\"", "timeout": 100}
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
+            "timeout": 10
+          }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/pre_compact.py\"", "timeout": 100}
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
+            "timeout": 10
+          }
         ]
       }
     ]

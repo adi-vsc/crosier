@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.install import merge_hooks_into_settings, _resolve_python
+from scripts.install import HOOK_EVENTS, HOOK_TIMEOUT_SECONDS, _resolve_python, merge_hooks_into_settings
 
 
 @pytest.fixture(autouse=True)
@@ -15,16 +15,16 @@ def _fixed_python(monkeypatch):
     monkeypatch.setattr("scripts.install._resolve_python", lambda: "python3")
 
 
-def test_merge_into_empty_settings(tmp_path: Path):
+def test_merge_registers_every_event_on_the_single_entrypoint(tmp_path: Path):
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{}", encoding="utf-8")
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert "UserPromptSubmit" in data["hooks"]
-    assert "PreCompact" in data["hooks"]
-    command = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-    assert "user_prompt_submit.py" in command
-    assert "/plugins/crosier" in command
+    assert set(HOOK_EVENTS) == {"UserPromptSubmit", "PostToolBatch", "Stop", "PreCompact"}
+    for event in HOOK_EVENTS:
+        command = data["hooks"][event][0]["hooks"][0]["command"]
+        assert "crosier_hook.py" in command
+        assert "/plugins/crosier" in command
 
 
 def test_merge_preserves_existing_unrelated_hooks(tmp_path: Path):
@@ -48,37 +48,54 @@ def test_merge_is_idempotent(tmp_path: Path):
     assert len(data["hooks"]["UserPromptSubmit"]) == 1
 
 
-def test_merge_writes_timeout_on_hook_entries(tmp_path: Path):
+def test_merge_writes_a_short_timeout_on_hook_entries(tmp_path: Path):
+    # The hook dispatches to a background worker and returns; a long timeout
+    # here would only ever be time the user spends waiting on a broken install.
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{}", encoding="utf-8")
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"] == 100
-    assert data["hooks"]["PreCompact"][0]["hooks"][0]["timeout"] == 100
+    for event in HOOK_EVENTS:
+        assert data["hooks"][event][0]["hooks"][0]["timeout"] == HOOK_TIMEOUT_SECONDS
+    assert HOOK_TIMEOUT_SECONDS <= 15
+
+
+def _runner(versions: dict):
+    """Fake `subprocess.run` for the version probe: `versions` maps the first
+    argv token to the (major, minor) it reports, or None for a broken stub."""
+
+    def fake_run(cmd, **kwargs):
+        version = versions.get(cmd[0])
+        if version is None:
+            return subprocess.CompletedProcess(cmd, returncode=9009, stdout=b"")
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout=f"{version[0]}.{version[1]}".encode())
+
+    return fake_run
 
 
 def test_resolve_python_falls_back_when_python3_is_broken(monkeypatch):
-    def fake_run(cmd, **kwargs):
-        returncode = 9009 if cmd[0] == "python3" else 0
-        return subprocess.CompletedProcess(cmd, returncode=returncode)
-
-    monkeypatch.setattr("scripts.install.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.install.subprocess.run", _runner({"python3": None, "python": (3, 12)}))
     assert _resolve_python() == "python"
 
 
 def test_resolve_python_prefers_python3_when_it_works(monkeypatch):
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(cmd, returncode=0)
-
-    monkeypatch.setattr("scripts.install.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.install.subprocess.run", _runner({"python3": (3, 12), "python": (3, 12)}))
     assert _resolve_python() == "python3"
 
 
 def test_resolve_python_falls_back_to_py_launcher(monkeypatch):
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["py", "-3"]:
-            return subprocess.CompletedProcess(cmd, returncode=0)
-        return subprocess.CompletedProcess(cmd, returncode=9009)
-
-    monkeypatch.setattr("scripts.install.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.install.subprocess.run", _runner({"py": (3, 12)}))
     assert _resolve_python() == "py -3"
+
+
+def test_resolve_python_prefers_an_interpreter_with_tomllib(monkeypatch):
+    # On this machine `python` is 3.10 and `py -3` is 3.14. The hook runs on
+    # 3.10 (config ignored) but should not be installed onto it when a newer
+    # interpreter is one probe away.
+    monkeypatch.setattr("scripts.install.subprocess.run", _runner({"python3": None, "python": (3, 10), "py": (3, 14)}))
+    assert _resolve_python() == "py -3"
+
+
+def test_resolve_python_settles_for_an_old_interpreter_when_nothing_newer_exists(monkeypatch):
+    monkeypatch.setattr("scripts.install.subprocess.run", _runner({"python": (3, 10)}))
+    assert _resolve_python() == "python"

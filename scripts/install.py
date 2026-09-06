@@ -6,27 +6,54 @@ import subprocess
 import sys
 from pathlib import Path
 
+"""The hook parses a transcript and spawns a detached worker, so its own
+runtime is milliseconds. A generous timeout here would only ever mean the user
+staring at a frozen prompt because something went wrong."""
+HOOK_TIMEOUT_SECONDS = 10
+
+HOOK_EVENTS = ("UserPromptSubmit", "PostToolBatch", "Stop", "PreCompact")
+
+MIN_VERSION = (3, 11)  # tomllib; below it the hook runs with defaults only
+
+_VERSION_PROBE = "import sys; print('%d.%d' % sys.version_info[:2])"
+
 
 def _hook_entry(command: str) -> dict:
-    return {"hooks": [{"type": "command", "command": command, "timeout": 100}]}
+    return {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}]}
+
+
+def _probe(candidate: list) -> tuple | None:
+    try:
+        result = subprocess.run(candidate + ["-c", _VERSION_PROBE], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        major, minor = result.stdout.decode().strip().split(".")
+        return (int(major), int(minor))
+    except ValueError:
+        return None
 
 
 def _resolve_python() -> str:
-    """Probe for a working Python interpreter.
+    """Probe for a working Python interpreter, preferring one new enough.
 
     ``python3`` resolves to a non-functional Microsoft Store alias stub on
     many stock Windows installs (python.org installs ship ``python.exe``
-    only), so we can't hardcode it. Try ``python3``, then ``python``, then
-    the Windows ``py -3`` launcher, and use whichever actually runs.
+    only), and ``python`` there is often an older interpreter without
+    ``tomllib``. Try ``python3``, ``python``, then the ``py -3`` launcher;
+    take the first that meets MIN_VERSION, else the first that runs at all.
     """
+    fallback = None
     for candidate in (["python3"], ["python"], ["py", "-3"]):
-        try:
-            result = subprocess.run(candidate + ["--version"], capture_output=True, timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
+        version = _probe(candidate)
+        if version is None:
             continue
-        if result.returncode == 0:
+        if version >= MIN_VERSION:
             return " ".join(candidate)
-    return "python3"
+        fallback = fallback or " ".join(candidate)
+    return fallback or "python3"
 
 
 def merge_hooks_into_settings(settings_path: Path, plugin_root: Path) -> None:
@@ -40,10 +67,9 @@ def merge_hooks_into_settings(settings_path: Path, plugin_root: Path) -> None:
 
     python_cmd = _resolve_python()
     plugin_root_posix = Path(plugin_root).as_posix()
-    ups_command = f'{python_cmd} "{plugin_root_posix}/hooks/user_prompt_submit.py"'
-    precompact_command = f'{python_cmd} "{plugin_root_posix}/hooks/pre_compact.py"'
+    command = f'{python_cmd} "{plugin_root_posix}/hooks/crosier_hook.py"'
 
-    for event, command in (("UserPromptSubmit", ups_command), ("PreCompact", precompact_command)):
+    for event in HOOK_EVENTS:
         existing = data["hooks"].setdefault(event, [])
         already_present = any(
             command == h.get("command")

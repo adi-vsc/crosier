@@ -24,11 +24,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from crosier.config import load_config  # noqa: E402
+from crosier.announce import activation_text, merge_system_message  # noqa: E402
+from crosier.config import disabled_by_env, load_config  # noqa: E402
 from crosier.errors import record_failure, should_disable  # noqa: E402
 from crosier.heuristic import should_escalate  # noqa: E402
 from crosier.pipeline import consume, dispatch  # noqa: E402
 from crosier.state import load_state, save_state  # noqa: E402
+from crosier.trigger import consume_trigger  # noqa: E402
 from crosier.transcript import (  # noqa: E402
     context_tokens,
     delta_text,
@@ -68,6 +70,10 @@ def run(payload: dict) -> dict | None:
     event = payload.get("hook_event_name")
     if event not in HANDLED_EVENTS:
         return None
+    if disabled_by_env():
+        # A one-session kill switch has to cost nothing: no transcript read,
+        # no state write, no marker, no announcement.
+        return None
 
     project_root = Path(payload.get("cwd") or os.getcwd())
     session_id = str(payload.get("session_id") or "unknown")
@@ -98,9 +104,13 @@ def run(payload: dict) -> dict | None:
 
     if not state.disabled_for_session:
         current_context = context_tokens(lines)
-        if event == "PreCompact":
+        # A requested check is the user overriding the threshold; PreCompact is
+        # the highest-drift-risk moment in a session. Both still go through
+        # dispatch, so the budget and the one-worker-in-flight rule hold.
+        requested = consume_trigger()
+        if event == "PreCompact" or requested:
             dispatch(session_id, state, config, lines, current_context)
-        else:
+        if event != "PreCompact":
             _count_new_material(state, lines)
             if event == "UserPromptSubmit":
                 state.total_turns += 1
@@ -110,8 +120,12 @@ def run(payload: dict) -> dict | None:
                 # or the final response of the turn.
                 state.calls_since_check += 1
             growth = _context_growth(state, current_context)
-            if should_escalate(state, config, growth):
+            if not requested and should_escalate(state, config, growth):
                 dispatch(session_id, state, config, lines, current_context)
+
+    if not state.announced_activation:
+        state.announced_activation = True
+        output = merge_system_message(output, activation_text(config.first_check_call_threshold))
 
     save_state(session_id, state)
     return output

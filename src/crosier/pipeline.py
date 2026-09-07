@@ -12,6 +12,7 @@ from crosier.config import CrosierConfig
 from crosier.digest import build_excerpt
 from crosier.errors import record_failure, should_disable
 from crosier.heuristic import budget_exhausted
+from crosier.journal import record_check
 from crosier.paths import errors_log_path
 from crosier.pending import clear_result, is_stale, read_result
 from crosier.spawn import marker_path, spawn_worker, worker_is_active
@@ -52,6 +53,9 @@ def consume(
 
     if is_stale(result, line_count, config.staleness_line_limit):
         record_failure("verdict discarded as stale")
+        # Journalled too: a check that ran and was thrown away still cost the
+        # session a call, and a report that hides it under-counts the overhead.
+        _journal(session_id, state, result, {"status": "stale"}, False)
         return stale_output(config.announce)
 
     verdict = result.get("verdict")
@@ -62,10 +66,33 @@ def consume(
         config.announce,
         config.min_flag_confidence,
     )
-    if output and "hookSpecificOutput" in output and isinstance(verdict, dict):
+    delivered = bool(output and "hookSpecificOutput" in output)
+    if delivered and isinstance(verdict, dict):
         # Remembered so the next reviewer is told the agent already saw it.
         state.last_flag = verdict.get("flagged_claim") or "an assumption in the recent work"
+    _journal(session_id, state, result, verdict, delivered)
     return output
+
+
+def _journal(session_id, state, result, verdict, delivered) -> None:
+    """Record what this check saw, for `crosier report`. Never read back by
+    the checking path, so a failed write costs the session nothing."""
+    verdict = verdict if isinstance(verdict, dict) else {}
+    record_check(
+        session_id,
+        {
+            "turn": result.get("turn_number", state.total_turns),
+            "checks_run": state.checks_run,
+            "status": verdict.get("status"),
+            "category": verdict.get("category"),
+            "confidence": verdict.get("confidence"),
+            "flagged_claim": verdict.get("flagged_claim"),
+            "evidence_verified": verdict.get("evidence_verified"),
+            "delivered_to_agent": delivered,
+            "context_tokens": result.get("context_tokens"),
+            "created_at": result.get("created_at"),
+        },
+    )
 
 
 def dispatch(

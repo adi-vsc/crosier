@@ -81,5 +81,30 @@ def stale_output(announce_mode: str) -> dict | None:
     return _user_only("Crosier direction check result discarded as stale — the session moved on before it returned.")
 
 
+def activation_text(first_check_calls: int) -> str:
+    """The one line that tells a fresh install it is running.
+
+    Crosier's whole design is to stay silent until it has something to say,
+    which from the outside is indistinguishable from a plugin that failed to
+    load. User channel only: the agent has no use for this.
+    """
+    return f"Crosier active — first direction check after about {first_check_calls} model calls."
+
+
+def merge_system_message(output: dict | None, message: str) -> dict:
+    """Fold a user-channel line into whatever the hook was already printing.
+
+    A hook prints at most one JSON object, so an activation line and a verdict
+    landing on the same invocation have to share the `systemMessage` slot
+    rather than one silently dropping the other.
+    """
+    if output is None:
+        return _user_only(message)
+    merged = dict(output)
+    existing = merged.get("systemMessage")
+    merged["systemMessage"] = f"{message} {existing}" if existing else message
+    return merged
+
+
 def backoff_output(log_path: str) -> dict:
     return _user_only(f"Crosier direction checks disabled for this session after repeated errors — see {log_path}.")

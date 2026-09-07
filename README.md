@@ -7,10 +7,11 @@ folklore:
 
 | Finding | Source |
 |---|---|
-| 18 frontier models show monotonically decreasing accuracy as input length grows, even well below their context limit | [Chroma, "Context Rot" (Jul 2025)](https://www.trychroma.com/research/context-rot) |
-| Every top model tested drops 39% average accuracy in multi-turn vs. single-turn on the same task | [arXiv:2505.06120](https://arxiv.org/abs/2505.06120) |
-| Sequential multi-turn presentation cuts accuracy/abstention ~30% on average, up to 65% in some models | [arXiv:2603.11394](https://arxiv.org/abs/2603.11394) |
-| A parallel LLM monitor cuts agent looping 52-62% at ~11% token overhead | [arXiv:2604.13759](https://arxiv.org/abs/2604.13759) |
+| Across 18 models, performance "degrades as input length increases, often in surprising and non-uniform ways" — well below the context limit | [Chroma, "Context Rot" (Jul 2025)](https://www.trychroma.com/research/context-rot) |
+| Every top model tested drops 39% average accuracy in multi-turn vs. single-turn on the same task, and the loss originates in early commitments the model never recovers from | [Laban et al., arXiv:2505.06120](https://arxiv.org/abs/2505.06120) |
+| Across 17 models, splitting a question into sequential turns cuts end-to-end accuracy and abstention "by an average of up to 30%, reaching 65% in certain models" (clinical benchmarks) | [Guo et al., arXiv:2603.11394](https://arxiv.org/abs/2603.11394) |
+| A parallel LLM monitor "reduced repetition on loop-prone tasks by 52-62% with approximately 11% overhead" — a feasibility study, and its authors note the benefit is task-type dependent | [Khan & Khan, arXiv:2604.13759](https://arxiv.org/abs/2604.13759) |
+| "Self-correction works well in tasks that can use reliable external feedback" — which is why the reviewer is told to decide a verification claim on the tool result, not on the prose | [Kamoi et al., arXiv:2406.01297](https://arxiv.org/abs/2406.01297) |
 
 Crosier periodically hands a structured excerpt of your session to a fresh,
 zero-context Claude instance for a second opinion, and delivers the answer
@@ -19,26 +20,70 @@ its answer — so a correction is preventive rather than a post-mortem.
 
 ## Install
 
-As a Claude Code plugin from the marketplace (see
-`.claude-plugin/plugin.json`) — this is the supported path, and it registers
-all four hooks for you.
-
-To install from a source checkout instead:
+As a Claude Code plugin. Two lines, from inside Claude Code:
 
 ```
-git clone https://github.com/<owner>/crosier && cd crosier
+/plugin marketplace add <OWNER>/crosier
+/plugin install crosier@crosier
+```
+
+The first line registers this repository as a plugin marketplace (it carries
+`.claude-plugin/marketplace.json`); the second installs the plugin from it and
+registers all four hooks for you. This is the supported path.
+
+The plugin is self-contained: it needs no `pip install` and no dependencies.
+
+The `crosier` CLI (`status`, `report`, `check`) is optional and comes from a
+checkout — it is not on PyPI yet:
+
+```
+git clone https://github.com/<OWNER>/crosier && cd crosier
+pip install -e .
+```
+
+To register the hooks from a checkout instead of through the marketplace:
+
+```
 python3 -m scripts.install
 ```
 
-`pip install crosier` gives you the library only. The hook entrypoint lives in
-`hooks/` at the repo root, outside the packaged `crosier` module, because the
-plugin loader resolves it from the checkout via `${CLAUDE_PLUGIN_ROOT}` — so
-`python3 -m scripts.install` needs the checkout, not the wheel.
+The hook entrypoint lives in `hooks/` at the repo root, outside the packaged
+`crosier` module, because the plugin loader resolves it from the checkout via
+`${CLAUDE_PLUGIN_ROOT}` — so `python3 -m scripts.install` needs the checkout,
+not a wheel.
 
 Python 3.11+ is recommended. On 3.10 the hook still runs, with defaults only
 (no `tomllib`, so `.crosier.toml` is ignored).
 
-No configuration is required — defaults are safe and on by default.
+No configuration is required — defaults are safe and on by default. On its
+first hook event of a session Crosier prints one line to your screen saying it
+is running and when the first check is due, and then says nothing until it has
+something to say.
+
+## Checking on it, and turning it off
+
+```
+crosier status     # on? budget left? what did it last say? where are the files?
+crosier report     # every check this session made, and what was flagged
+crosier check      # run a direction check now instead of at the next threshold
+```
+
+Both need the CLI installed (see above). `crosier check` leaves a request that
+the session's next hook event picks up, so the check starts within one model
+call. Inside Claude Code the plugin also ships `/crosier:check`, which runs the
+same command for you (it needs the CLI too) — the fastest way to see Crosier work on your very first
+session rather than waiting for the first threshold.
+
+To switch Crosier off for one session without editing anything, start Claude
+with the kill switch set:
+
+```
+CROSIER_DISABLED=1 claude
+```
+
+The hook checks it before doing any work: no transcript read, no state written,
+no output. To switch it off for a project instead, set `enabled = false` in
+`.crosier.toml`.
 
 ## How it works
 
@@ -78,8 +123,10 @@ check that finds nothing costs the session nothing.
 
 ## What the reviewer looks for
 
-`unverified_claim` (a result stated as fact that no tool output supports, or
-one contradicts), `off_goal` (work no longer serving the original request or
+`unverified_claim` (a verification outcome — tests pass, build succeeds, bug
+fixed — decided against the `[tool_result]` lines in the window rather than
+against how confidently it is worded: a claim no result supports, or one a
+result contradicts), `off_goal` (work no longer serving the original request or
 the latest instruction), `ignored_correction`, `research_collapse` (acting on
 recalled facts where a cheap check was available), `loop` (same call, same
 target, no progress), `padding`.
@@ -132,6 +179,7 @@ announce = "always"          # "always" | "on-flag"  (clean verdicts: on screen 
 verdict_model = "sonnet"
 
 call_threshold = 30          # model calls since the last check
+first_check_call_threshold = 12  # the FIRST check of a session fires here
 turn_threshold = 10          # user prompts since the last check
 token_threshold = 40000      # context growth since the last check
 repetition_threshold = 0.4
@@ -146,6 +194,18 @@ worker_deadline = 90         # worker self-destructs here
 
 An unparseable file, or a bad value for any single key, falls back to the
 default for that key rather than taking your turn down with it.
+
+`first_check_call_threshold` exists because the damage a long session never
+recovers from is committed early — models "make assumptions in early turns and
+prematurely attempt to generate final solutions, on which they overly rely"
+([arXiv:2505.06120](https://arxiv.org/abs/2505.06120)) — and under one flat
+threshold that stretch is the only part of a session nobody looks at. It moves
+the first check earlier; it does not add checks. `max_checks_per_session` and
+`min_calls_between_checks` are unchanged and still govern, so a session's total
+spend is the same.
+
+`CROSIER_DISABLED=1` in the environment turns Crosier off for that session
+regardless of any config file.
 
 ## Statistics
 

@@ -32,6 +32,9 @@ class SessionState:
     # concern the agent already answered is not raised again as if new.
     last_flag: str | None = None
     disabled_for_session: bool = False
+    # A user who installs a plugin and then sees nothing for thirty calls has
+    # no way to tell it from a plugin that did not install. One line, once.
+    announced_activation: bool = False
 
 
 def load_state(session_id: str) -> SessionState:

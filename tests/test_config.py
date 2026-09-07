@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from crosier import config as config_module
-from crosier.config import CrosierConfig, load_config
+from crosier.config import CrosierConfig, disabled_by_env, load_config
 
 
 def test_defaults_when_no_config_file(tmp_path: Path):
@@ -102,3 +102,36 @@ def test_without_tomllib_the_defaults_still_load(tmp_path: Path, monkeypatch):
     (tmp_path / ".crosier.toml").write_text('[crosier]\ncall_threshold = 3\n', encoding="utf-8")
     monkeypatch.setattr(config_module, "tomllib", None)
     assert load_config(tmp_path) == CrosierConfig()
+
+
+def test_first_check_threshold_has_a_default_and_is_configurable(tmp_path):
+    assert CrosierConfig().first_check_call_threshold == 12
+    (tmp_path / ".crosier.toml").write_text(
+        """[crosier]
+first_check_call_threshold = 5
+""",
+        encoding="utf-8",
+    )
+    assert load_config(tmp_path).first_check_call_threshold == 5
+
+
+def test_a_bad_first_check_threshold_falls_back_to_the_default(tmp_path):
+    (tmp_path / ".crosier.toml").write_text(
+        """[crosier]
+first_check_call_threshold = "soon"
+""",
+        encoding="utf-8",
+    )
+    assert load_config(tmp_path).first_check_call_threshold == 12
+
+
+def test_kill_switch_env_var(monkeypatch):
+    # A one-session kill switch that only half-works is worse than none.
+    monkeypatch.delenv("CROSIER_DISABLED", raising=False)
+    assert disabled_by_env() is False
+    for off in ("", "0", "false", "FALSE", "no", "  "):
+        monkeypatch.setenv("CROSIER_DISABLED", off)
+        assert disabled_by_env() is False, off
+    for on in ("1", "true", "yes", "anything"):
+        monkeypatch.setenv("CROSIER_DISABLED", on)
+        assert disabled_by_env() is True, on

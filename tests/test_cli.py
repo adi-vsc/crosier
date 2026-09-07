@@ -1,0 +1,96 @@
+"""The diagnostics surface. It reads only Crosier's own files under
+CROSIER_HOME — never the transcript, never the project — so a reporting tool
+cannot become a way for anything to see more than the reviewer can."""
+
+import pytest
+
+from crosier.cli import main
+from crosier.journal import record_check
+from crosier.state import SessionState, save_state
+
+
+@pytest.fixture(autouse=True)
+def _home(monkeypatch, tmp_path):
+    monkeypatch.setenv("CROSIER_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CROSIER_DISABLED", raising=False)
+    return tmp_path / "home"
+
+
+def test_status_without_a_session_says_so(capsys):
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "none yet" in out
+    assert "enabled:   yes" in out
+
+
+def test_status_reports_budget_and_the_last_verdict(capsys):
+    save_state("s1", SessionState(checks_run=3, calls_since_check=4))
+    record_check("s1", {"turn": 7, "status": "flag", "category": "unverified_claim",
+                        "flagged_claim": "tests pass", "delivered_to_agent": True})
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "session:   s1" in out
+    assert "checks:    3/12 used" in out
+    assert "unverified_claim: tests pass" in out
+
+
+def test_status_reports_the_env_kill_switch(monkeypatch, capsys):
+    monkeypatch.setenv("CROSIER_DISABLED", "1")
+    assert main(["status"]) == 0
+    assert "enabled:   no (CROSIER_DISABLED is set" in capsys.readouterr().out
+
+
+def test_status_picks_the_most_recently_written_session(capsys):
+    save_state("older", SessionState(checks_run=1))
+    save_state("newer", SessionState(checks_run=2))
+    assert main(["status"]) == 0
+    assert "session:   newer" in capsys.readouterr().out
+
+
+def test_report_lists_every_check_and_marks_what_the_agent_saw(capsys):
+    save_state("s1", SessionState(checks_run=2, total_turns=9))
+    record_check("s1", {"turn": 3, "status": "proceed", "delivered_to_agent": False,
+                        "confidence": "high", "context_tokens": 41000})
+    record_check("s1", {"turn": 8, "status": "flag", "category": "loop",
+                        "flagged_claim": "re-reading conf.yaml", "confidence": "low",
+                        "delivered_to_agent": False})
+    assert main(["report"]) == 0
+    out = capsys.readouterr().out
+    assert "checks used:  2/12" in out
+    assert "turns seen:   9" in out
+    assert "(1 flagged, 0 shown to the agent)" in out
+    assert "turn 3: no issues found" in out
+    assert "loop: re-reading conf.yaml" in out
+    # A flag the confidence gate suppressed is reported as such, not as a
+    # correction the agent ignored.
+    assert "not shown to the agent" in out
+    assert "41,000 ctx tokens" in out
+
+
+def test_report_without_a_session_is_not_an_error(capsys):
+    assert main(["report"]) == 0
+    assert "No Crosier session found" in capsys.readouterr().out
+
+
+def test_check_writes_a_trigger_the_hook_can_claim(capsys):
+    from crosier.trigger import consume_trigger
+
+    assert main(["check"]) == 0
+    assert "requested" in capsys.readouterr().out
+    assert consume_trigger() is True
+    # Claimed once, and only once.
+    assert consume_trigger() is False
+
+
+def test_bare_invocation_prints_help_rather_than_failing(capsys):
+    assert main([]) == 0
+    assert "usage: crosier" in capsys.readouterr().out
+
+
+def test_report_shows_a_check_that_was_thrown_away_as_stale(capsys):
+    # A verdict that came back after the session moved on still cost a call.
+    # A report that hides it under-counts what Crosier spent.
+    save_state("s1", SessionState(checks_run=1))
+    record_check("s1", {"turn": 5, "status": "stale", "delivered_to_agent": False})
+    assert main(["report"]) == 0
+    assert "discarded" in capsys.readouterr().out

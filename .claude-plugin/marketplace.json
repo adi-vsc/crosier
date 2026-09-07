@@ -1,0 +1,18 @@
+{
+  "name": "crosier",
+  "owner": {
+    "name": "<OWNER>",
+    "url": "https://github.com/<OWNER>"
+  },
+  "description": "Install-and-forget direction checks for long Claude Code sessions.",
+  "plugins": [
+    {
+      "name": "crosier",
+      "source": "./",
+      "description": "A fresh, zero-context Claude instance periodically reviews a structured excerpt of your session and flags drift inside the turn, before the answer is done.",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["drift", "review", "hooks", "long-sessions"]
+    }
+  ]
+}

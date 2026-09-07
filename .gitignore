@@ -9,4 +9,5 @@ build/
 graphify-out/
 scope.md
 benchmark/run.log
+benchmark/run_v*.log
 benchmark/results.json

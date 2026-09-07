@@ -64,9 +64,41 @@ def test_no_escalation_below_all_thresholds():
 
 
 def test_escalates_on_call_threshold():
+    # Steady state: checks_run > 0, so the ordinary threshold governs.
     config = CrosierConfig(call_threshold=30)
-    assert should_escalate(SessionState(calls_since_check=30), config) is True
-    assert should_escalate(SessionState(calls_since_check=29), config) is False
+    assert should_escalate(SessionState(calls_since_check=30, checks_run=1), config) is True
+    assert should_escalate(SessionState(calls_since_check=29, checks_run=1), config) is False
+
+
+def test_first_check_of_a_session_fires_earlier():
+    # The damage a long session never recovers from is committed early, so the
+    # first check does not wait for the steady-state cadence.
+    config = CrosierConfig(call_threshold=30, first_check_call_threshold=12)
+    assert should_escalate(SessionState(calls_since_check=12, checks_run=0), config) is True
+    assert should_escalate(SessionState(calls_since_check=11, checks_run=0), config) is False
+    # And it applies only to the first: after one check, 12 is not enough.
+    assert should_escalate(SessionState(calls_since_check=12, checks_run=1), config) is False
+
+
+def test_early_first_check_still_obeys_the_cooldown():
+    # A first_check threshold below the cooldown cannot fire below the cooldown.
+    config = CrosierConfig(first_check_call_threshold=2, min_calls_between_checks=8)
+    assert should_escalate(SessionState(calls_since_check=2, checks_run=0), config) is False
+    assert should_escalate(SessionState(calls_since_check=8, checks_run=0), config) is True
+
+
+def test_early_first_check_never_exceeds_the_ordinary_threshold():
+    # A user who lowers call_threshold below the first-check default must not
+    # get a *later* first check than their own setting.
+    config = CrosierConfig(call_threshold=5, first_check_call_threshold=12,
+                           min_calls_between_checks=0)
+    assert should_escalate(SessionState(calls_since_check=5, checks_run=0), config) is True
+
+
+def test_early_first_check_does_not_raise_the_budget():
+    config = CrosierConfig(max_checks_per_session=2, first_check_call_threshold=1,
+                           min_calls_between_checks=0)
+    assert should_escalate(SessionState(calls_since_check=50, checks_run=2), config) is False
 
 
 def test_escalates_on_turn_threshold_even_with_few_calls():

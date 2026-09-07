@@ -20,7 +20,12 @@ ASSISTANT_CHAR_CAP = 3000
 TOOL_USE_CHAR_CAP = 300
 TOOL_ARG_VALUE_CAP = 120
 TOOL_RESULT_HEAD = 500
-TOOL_RESULT_TAIL = 200
+# Verification outcomes live at the tail: every test runner and build tool
+# prints its summary last. Measured on a `npm test` failure, a 200-char tail
+# held only npm's own "Exit status 1" boilerplate and had cut away
+# "Tests: 2 failed, 48 passed" — the one line that decides an unverified_claim.
+# Only results longer than head+tail grow at all, and only by this delta.
+TOOL_RESULT_TAIL = 400
 
 _COMMAND_NAME_RE = re.compile(r"<command-name>\s*(\S+?)\s*</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)

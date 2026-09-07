@@ -1,5 +1,6 @@
 """Load Crosier configuration from an optional .crosier.toml, with safe defaults."""
 
+import os
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -13,6 +14,7 @@ DEFAULTS: dict = {
     "announce": "always",
     "verdict_model": "sonnet",
     "call_threshold": 30,
+    "first_check_call_threshold": 12,
     "turn_threshold": 10,
     "token_threshold": 40_000,
     "repetition_threshold": 0.4,
@@ -27,6 +29,17 @@ DEFAULTS: dict = {
 VALID_ANNOUNCE = {"always", "on-flag"}
 VALID_CONFIDENCE = {"low", "medium", "high"}
 
+DISABLE_ENV = "CROSIER_DISABLED"
+
+
+def disabled_by_env() -> bool:
+    """A one-session kill switch that needs no file and no restart of anything.
+
+    Checked before any other work, so `CROSIER_DISABLED=1 claude` costs a
+    session exactly one environment lookup per hook invocation.
+    """
+    return os.environ.get(DISABLE_ENV, "").strip().lower() not in ("", "0", "false", "no")
+
 
 @dataclass
 class CrosierConfig:
@@ -40,6 +53,11 @@ class CrosierConfig:
     # model's own previous output — so the primary trigger counts calls (tool
     # batches). Context growth and user turns are secondary triggers.
     call_threshold: int = 30
+    # Multi-turn degradation originates in early commitments the session never
+    # recovers from (arXiv:2505.06120), so the first check of a session fires
+    # sooner than the steady-state cadence. It does not raise the budget:
+    # `max_checks_per_session` and `min_calls_between_checks` still govern.
+    first_check_call_threshold: int = 12
     turn_threshold: int = 10
     token_threshold: int = 40_000
     repetition_threshold: float = 0.4
@@ -72,6 +90,7 @@ def _coerce(values: dict) -> dict:
         values["min_flag_confidence"] = DEFAULTS["min_flag_confidence"]
     for key in (
         "call_threshold",
+        "first_check_call_threshold",
         "turn_threshold",
         "token_threshold",
         "max_checks_per_session",

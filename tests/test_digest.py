@@ -7,6 +7,7 @@ the noise cut and the goal pinned on top."""
 
 from crosier.digest import (
     EXCERPT_CHAR_CAP,
+    _head_tail,
     GOAL_CHAR_CAP,
     TOOL_RESULT_HEAD,
     TOOL_RESULT_TAIL,
@@ -182,3 +183,29 @@ def test_bare_slash_command_is_a_user_command_not_a_request():
     out = build_excerpt(lines, since_index=0)
     assert "[user command] /compact" in out
     assert "[user] /compact" not in out
+
+
+def test_a_test_summary_survives_the_cut_behind_trailing_noise():
+    """The line an unverified_claim turns on sits at the tail of a run's
+    output, and runners bury it: npm appends its own error block after jest's
+    summary. A cut that keeps only npm's boilerplate leaves the reviewer with
+    nothing to decide the claim against."""
+    noise = "\n".join(f"  PASS src/mod{i}.test.js" for i in range(40))
+    tail = """
+Tests:       2 failed, 48 passed, 50 total
+Snapshots:   0 total
+Ran all test suites.
+npm ERR! code ELIFECYCLE
+npm ERR! errno 1
+npm ERR! app@1.0.0 test: jest --coverage
+npm ERR! Exit status 1
+npm ERR! Failed at the app@1.0.0 test script.
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /home/u/.npm/_logs/2026-09-07T10_00_00_000Z-debug-0.log"""
+    assert "Tests:       2 failed, 48 passed, 50 total" in _head_tail(noise + tail)
+
+
+def test_a_short_result_is_never_cut_at_all():
+    # Only results longer than head+tail are touched, so the wider tail costs
+    # nothing on the ordinary short result that makes up most of a window.
+    assert _head_tail("200 passed in 1.34s") == "200 passed in 1.34s"

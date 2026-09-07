@@ -71,6 +71,12 @@ def budget_exhausted(state: SessionState, config: CrosierConfig) -> bool:
     return state.checks_run >= config.max_checks_per_session
 
 
+def _call_threshold(state: SessionState, config: CrosierConfig) -> int:
+    if state.checks_run == 0:
+        return min(config.first_check_call_threshold, config.call_threshold)
+    return config.call_threshold
+
+
 def should_escalate(
     state: SessionState, config: CrosierConfig, context_growth: int | None = None
 ) -> bool:
@@ -83,7 +89,12 @@ def should_escalate(
         return True
     if state.calls_since_check < config.min_calls_between_checks:
         return False
-    if state.calls_since_check >= config.call_threshold:
+    # The first check of a session fires sooner than the rest. The damage a
+    # long session never recovers from is committed early (arXiv:2505.06120),
+    # and under one flat threshold that window is the one stretch of the
+    # session nobody looks at. The budget and the cooldown are unchanged, so
+    # this moves the first check earlier rather than adding checks.
+    if state.calls_since_check >= _call_threshold(state, config):
         return True
     if context_growth is not None:
         if context_growth >= config.token_threshold:

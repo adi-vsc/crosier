@@ -16,6 +16,7 @@ import pytest
 from crosier.pending import read_result, write_result
 from crosier.spawn import marker_path
 from crosier.state import load_state
+from crosier.trigger import request_check
 
 
 def _load_hook_module():
@@ -44,6 +45,9 @@ FLAG = {
 @pytest.fixture(autouse=True)
 def _home(monkeypatch, tmp_path):
     monkeypatch.setenv("CROSIER_HOME", str(tmp_path / "home"))
+    # A developer running the suite with the kill switch set in their own shell
+    # would otherwise see every hook test pass by doing nothing.
+    monkeypatch.delenv("CROSIER_DISABLED", raising=False)
     return tmp_path / "home"
 
 
@@ -104,6 +108,19 @@ class Session:
         return load_state(self.session_id)
 
 
+def _activation_only(out):
+    """The one user-channel line a fresh session gets on its first hook run.
+
+    It is `systemMessage` and nothing else: no `hookSpecificOutput`, so it
+    never reaches the agent and never continues a turn at Stop.
+    """
+    return (
+        isinstance(out, dict)
+        and set(out) == {"systemMessage"}
+        and out["systemMessage"].startswith("Crosier active")
+    )
+
+
 def _capturing_spawn(jobs):
     def fake_spawn(session_id, job):
         jobs.append(job)
@@ -144,7 +161,9 @@ def _config(session, **values):
 def test_hook_is_silent_below_every_threshold(tmp_path, monkeypatch, capsys):
     s = Session(tmp_path)
     s.prompt("goal")
-    assert s.fire("UserPromptSubmit", monkeypatch, capsys) is None
+    # The first invocation of a session carries the one activation line; every
+    # invocation after it is silent until a verdict is actually ready.
+    assert _activation_only(s.fire("UserPromptSubmit", monkeypatch, capsys))
     s.batch()
     assert s.fire("PostToolBatch", monkeypatch, capsys) is None
 
@@ -319,7 +338,8 @@ def test_stop_leaves_the_result_alone_while_already_continuing(tmp_path, monkeyp
     s.prompt("goal")
     write_result("s1", {"ok": True, "verdict": FLAG, "turn_number": 1, "transcript_index": 1, "created_at": time.time()})
     out = s.fire("Stop", monkeypatch, capsys, stop_hook_active=True)
-    assert out is None
+    # Only the activation line, which is user-channel: nothing continues the turn.
+    assert _activation_only(out)
     assert read_result("s1") is not None
 
 
@@ -332,7 +352,7 @@ def test_pre_compact_does_not_consume_a_waiting_result(tmp_path, monkeypatch, ca
     write_result("s1", {"ok": True, "verdict": FLAG, "turn_number": 1, "transcript_index": 1, "created_at": time.time()})
     with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
         out = s.fire("PreCompact", monkeypatch, capsys, trigger="manual")
-    assert out is None
+    assert _activation_only(out)
     assert read_result("s1") is not None
 
 
@@ -444,3 +464,136 @@ def test_unknown_event_is_a_no_op(tmp_path, monkeypatch, capsys):
     s.prompt("goal")
     assert s.fire("SessionStart", monkeypatch, capsys) is None
     assert s.state().total_turns == 0
+
+
+# --- control surface: kill switch, activation, on-demand check ------------------
+
+
+def test_env_kill_switch_makes_the_hook_do_nothing_at_all(tmp_path, monkeypatch, capsys):
+    # One session off, no file, no restart. It has to cost nothing: no output,
+    # no state file, no dispatch — otherwise "disabled" is not disabled.
+    jobs = []
+    s = Session(tmp_path)
+    _config(s, call_threshold=1, min_calls_between_checks=0)
+    s.prompt("goal")
+    monkeypatch.setenv("CROSIER_DISABLED", "1")
+    with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
+        for _ in range(5):
+            s.batch()
+            assert s.fire("PostToolBatch", monkeypatch, capsys) is None
+    assert jobs == []
+    assert not (tmp_path / "home" / "state").exists()
+
+
+def test_kill_switch_off_values_leave_crosier_running(tmp_path, monkeypatch, capsys):
+    s = Session(tmp_path)
+    s.prompt("goal")
+    monkeypatch.setenv("CROSIER_DISABLED", "0")
+    assert _activation_only(s.fire("UserPromptSubmit", monkeypatch, capsys))
+
+
+def test_activation_line_is_announced_once_per_session(tmp_path, monkeypatch, capsys):
+    s = Session(tmp_path)
+    s.prompt("goal")
+    assert _activation_only(s.fire("UserPromptSubmit", monkeypatch, capsys))
+    assert s.state().announced_activation is True
+    for _ in range(3):
+        s.batch()
+        assert s.fire("PostToolBatch", monkeypatch, capsys) is None
+
+
+def test_activation_line_is_silent_when_disabled_in_config(tmp_path, monkeypatch, capsys):
+    s = Session(tmp_path)
+    _config(s, enabled=False)
+    s.prompt("goal")
+    assert s.fire("UserPromptSubmit", monkeypatch, capsys) is None
+
+
+def test_activation_line_shares_the_slot_with_a_waiting_verdict(tmp_path, monkeypatch, capsys):
+    # A hook prints one JSON object. If a verdict lands on the same invocation
+    # as the activation line, neither may silently drop the other.
+    s = Session(tmp_path)
+    s.prompt("goal")
+    write_result("s1", {"ok": True, "verdict": FLAG, "turn_number": 1, "transcript_index": 1, "created_at": time.time()})
+    out = s.fire("UserPromptSubmit", monkeypatch, capsys)
+    assert "Crosier active" in out["systemMessage"]
+    assert "risky assumption" in out["systemMessage"]
+    assert "risky assumption" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_requested_check_dispatches_below_every_threshold(tmp_path, monkeypatch, capsys):
+    # The point of `crosier check`: a new user sees Crosier work on their first
+    # session instead of waiting for a threshold that may never trip.
+    jobs = []
+    s = Session(tmp_path)
+    _config(s, call_threshold=999, turn_threshold=999, min_calls_between_checks=999)
+    s.prompt("goal")
+    s.batch()
+    request_check()
+    with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
+        s.fire("PostToolBatch", monkeypatch, capsys)
+    assert len(jobs) == 1
+    assert s.state().checks_run == 1
+
+
+def test_a_requested_check_is_consumed_and_does_not_repeat(tmp_path, monkeypatch, capsys):
+    jobs = []
+    s = Session(tmp_path)
+    _config(s, call_threshold=999, turn_threshold=999, min_calls_between_checks=999)
+    s.prompt("goal")
+    request_check()
+    with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
+        s.batch()
+        s.fire("PostToolBatch", monkeypatch, capsys)
+        s.batch()
+        s.fire("PostToolBatch", monkeypatch, capsys)
+    assert len(jobs) == 1
+
+
+def test_a_requested_check_still_obeys_the_session_budget(tmp_path, monkeypatch, capsys):
+    # "Check now" overrides the threshold, not the guards: an unbounded manual
+    # trigger is an unbounded bill.
+    jobs = []
+    s = Session(tmp_path)
+    _config(s, max_checks_per_session=0)
+    s.prompt("goal")
+    s.batch()
+    request_check()
+    with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
+        s.fire("PostToolBatch", monkeypatch, capsys)
+    assert jobs == []
+
+
+def test_first_check_of_a_session_fires_before_the_steady_state_threshold(tmp_path, monkeypatch, capsys):
+    # Early premature commitments are where multi-turn sessions lose the plot,
+    # so the first check does not wait for the ordinary cadence.
+    jobs = []
+    s = Session(tmp_path)
+    _config(s, call_threshold=30, first_check_call_threshold=12, min_calls_between_checks=8)
+    s.prompt("build the importer")
+    s.fire("UserPromptSubmit", monkeypatch, capsys)
+    with patch("crosier.pipeline.spawn_worker", _capturing_spawn(jobs)):
+        for _ in range(11):
+            s.batch()
+            s.fire("PostToolBatch", monkeypatch, capsys)
+        assert jobs == []
+        s.batch()
+        s.fire("PostToolBatch", monkeypatch, capsys)
+    assert len(jobs) == 1
+
+
+def test_a_completed_check_is_written_to_the_journal(tmp_path, monkeypatch, capsys):
+    from crosier.journal import read_journal
+
+    s = Session(tmp_path)
+    s.prompt("goal")
+    s.fire("UserPromptSubmit", monkeypatch, capsys)
+    write_result("s1", {"ok": True, "verdict": FLAG, "turn_number": 2, "transcript_index": 1,
+                        "context_tokens": 51000, "created_at": time.time()})
+    s.batch()
+    s.fire("PostToolBatch", monkeypatch, capsys)
+    entries = read_journal("s1")
+    assert len(entries) == 1
+    assert entries[0]["category"] == "unverified_claim"
+    assert entries[0]["delivered_to_agent"] is True
+    assert entries[0]["context_tokens"] == 51000

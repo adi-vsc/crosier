@@ -11,3 +11,10 @@ scope.md
 benchmark/run.log
 benchmark/run_v*.log
 benchmark/results.json
+.codebase-memory/
+benchmark/sessions/
+benchmark/chat_results*.json
+.env
+LOGBOOK.md
+.claude-flow/
+.swarm/

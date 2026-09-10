@@ -52,8 +52,10 @@ The hook entrypoint lives in `hooks/` at the repo root, outside the packaged
 `${CLAUDE_PLUGIN_ROOT}` — so `python3 -m scripts.install` needs the checkout,
 not a wheel.
 
-Python 3.11+ is recommended. On 3.10 the hook still runs, with defaults only
-(no `tomllib`, so `.crosier.toml` is ignored).
+Python 3.11+ is required. Older versions have no `tomllib` and would run with
+defaults while silently ignoring your `.crosier.toml`, so the hook declines the
+event instead; the install command tries `python3`, then `python`, then `py -3`,
+and takes the first one new enough.
 
 No configuration is required — defaults are safe and on by default. On its
 first hook event of a session Crosier prints one line to your screen saying it

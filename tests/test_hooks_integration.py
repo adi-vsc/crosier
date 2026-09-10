@@ -597,3 +597,13 @@ def test_a_completed_check_is_written_to_the_journal(tmp_path, monkeypatch, caps
     assert entries[0]["category"] == "unverified_claim"
     assert entries[0]["delivered_to_agent"] is True
     assert entries[0]["context_tokens"] == 51000
+
+
+def test_unsupported_interpreter_exits_nonzero_so_the_fallback_chain_advances(monkeypatch, capsys):
+    # plugin.json runs `python3 X || python X || py -3 X`. That chain only
+    # advances on a nonzero exit, so a hook that always exits 0 pins itself to
+    # whatever `python3` happens to be - a 3.10 that cannot read .crosier.toml.
+    monkeypatch.setattr(sys, "version_info", (3, 10, 20, "final", 0))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    assert hook.main() == 1
+    assert capsys.readouterr().out == ""

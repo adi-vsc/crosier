@@ -14,13 +14,17 @@ JSON object.
   moment) and delivers nothing, since its stdout is not injected anywhere.
 
 Nothing here blocks: the hook's own runtime is pure Python and one process
-spawn. Always exits 0, prints nothing on any internal failure.
+spawn. On a supported interpreter it always exits 0 and prints nothing on any
+internal failure; the one nonzero exit is an interpreter too old to run on,
+which hands the event to the next command in plugin.json's fallback chain.
 """
 
 import json
 import os
 import sys
 from pathlib import Path
+
+MIN_PYTHON = (3, 11)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -132,6 +136,14 @@ def run(payload: dict) -> dict | None:
 
 
 def main() -> int:
+    if sys.version_info < MIN_PYTHON:
+        # plugin.json invokes `python3 ... || python ... || py -3 ...`, and that
+        # chain only advances on a nonzero exit. Exiting 0 here would pin
+        # Crosier to a `python3` that predates tomllib, silently discarding
+        # .crosier.toml; exiting nonzero lets a newer interpreter take the
+        # event. If none exists, Claude Code reports the failing hook, which is
+        # the outcome an unreadable config deserves.
+        return 1
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError, ValueError):

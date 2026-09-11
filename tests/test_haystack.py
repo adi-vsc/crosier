@@ -163,3 +163,14 @@ def test_load_filler_skips_malformed_lines(tmp_path):
     entries = load_filler(p)
     assert len(entries) == 2
     assert all(e["message"]["content"] == "hi" for e in entries)
+
+
+def test_drift_visible_is_decided_at_the_caller_s_cap():
+    """A case grown to 33k and then rendered under a 12k cap has lost the
+    material a 40k render kept, and drift_visible has to say so."""
+    filler = _make_filler(400)
+    case = _drift_case()
+    wide = build_haystack(case, filler, 33_000, position="middle")
+    narrow = build_haystack(case, filler, 33_000, position="middle", char_cap=12_000)
+    assert wide["drift_visible"] is True
+    assert narrow["drift_visible"] is False

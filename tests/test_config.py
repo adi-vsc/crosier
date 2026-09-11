@@ -137,8 +137,13 @@ def test_kill_switch_env_var(monkeypatch):
         assert disabled_by_env() is True, on
 
 
-def test_verdict_effort_defaults_to_none_so_the_cli_default_is_unchanged(tmp_path):
-    assert load_config(tmp_path).verdict_effort is None
+def test_verdict_effort_defaults_to_low(tmp_path):
+    # Measured on the 18-case synthetic corpus at 3 repeats: low scores 27/27
+    # recall, 9/9 category and 0/27 false positives, against 1 false positive
+    # run of 27 for the CLI default on the same corpus. It also returns in
+    # 3.7s on a cap-sized excerpt where the default takes 93.0s, which is past
+    # the worker deadline that is supposed to bound it.
+    assert load_config(tmp_path).verdict_effort == "low"
 
 
 def test_verdict_effort_accepts_a_level(tmp_path):
@@ -148,8 +153,15 @@ def test_verdict_effort_accepts_a_level(tmp_path):
     assert load_config(tmp_path).verdict_effort == "low"
 
 
+def test_verdict_effort_can_be_turned_off_to_get_the_cli_default(tmp_path):
+    (tmp_path / ".crosier.toml").write_text(
+        '[crosier]\nverdict_effort = "none"\n', encoding="utf-8"
+    )
+    assert load_config(tmp_path).verdict_effort is None
+
+
 def test_an_unknown_verdict_effort_degrades_to_the_default(tmp_path):
     (tmp_path / ".crosier.toml").write_text(
         '[crosier]\nverdict_effort = "turbo"\n', encoding="utf-8"
     )
-    assert load_config(tmp_path).verdict_effort is None
+    assert load_config(tmp_path).verdict_effort == "low"

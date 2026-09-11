@@ -13,7 +13,7 @@ DEFAULTS: dict = {
     "enabled": True,
     "announce": "always",
     "verdict_model": "sonnet",
-    "verdict_effort": None,
+    "verdict_effort": "low",
     "call_threshold": 30,
     "first_check_call_threshold": 12,
     "turn_threshold": 10,
@@ -29,6 +29,9 @@ DEFAULTS: dict = {
 
 VALID_ANNOUNCE = {"always", "on-flag"}
 VALID_EFFORT = {"low", "medium", "high", "xhigh", "max"}
+# What a user writes to opt out: TOML has no null, so the level that means
+# "let the CLI decide" needs a spelling.
+EFFORT_CLI_DEFAULT = "none"
 VALID_CONFIDENCE = {"low", "medium", "high"}
 
 DISABLE_ENV = "CROSIER_DISABLED"
@@ -50,11 +53,14 @@ class CrosierConfig:
     # "on-flag": nothing is shown unless there is a concern.
     announce: str = "always"
     verdict_model: str = "sonnet"
-    # The reviewer's thinking budget, passed to `claude --effort`. None
-    # leaves the CLI default, which measured 8,322 output tokens and 93.0s
-    # on a cap-sized excerpt: past `worker_deadline`, so the verdict that
-    # call paid for was thrown away.
-    verdict_effort: str | None = None
+    # The reviewer's thinking budget, passed to `claude --effort`. The CLI
+    # default measured 8,322 output tokens and 93.0s on a cap-sized excerpt,
+    # past `worker_deadline`, so the verdict that call paid for was thrown
+    # away. "low" returns the same excerpt in 3.7s, and on the 18-case
+    # synthetic corpus at 3 repeats it scores 27/27 recall, 9/9 category and
+    # 0/27 false positives against 1 false positive run of 27 for the CLI
+    # default. Set it to "none" to hand the choice back to the CLI.
+    verdict_effort: str | None = "low"
 
     # Drift accrues per model call — every one is a chance to build on the
     # model's own previous output — so the primary trigger counts calls (tool
@@ -113,7 +119,9 @@ def _coerce(values: dict) -> dict:
         values["repetition_threshold"] = DEFAULTS["repetition_threshold"]
     if not isinstance(values.get("verdict_model"), str) or not values["verdict_model"]:
         values["verdict_model"] = DEFAULTS["verdict_model"]
-    if values.get("verdict_effort") not in VALID_EFFORT:
+    if values.get("verdict_effort") == EFFORT_CLI_DEFAULT:
+        values["verdict_effort"] = None
+    elif values.get("verdict_effort") not in VALID_EFFORT:
         values["verdict_effort"] = DEFAULTS["verdict_effort"]
     if not isinstance(values.get("enabled"), bool):
         values["enabled"] = DEFAULTS["enabled"]

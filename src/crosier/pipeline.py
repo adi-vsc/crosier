@@ -91,6 +91,12 @@ def _journal(session_id, state, result, verdict, delivered) -> None:
             "delivered_to_agent": delivered,
             "context_tokens": result.get("context_tokens"),
             "created_at": result.get("created_at"),
+            # What the check itself cost. Reported back by `crosier report`, so
+            # the overhead of watching a session is visible beside its findings
+            # rather than taken on trust.
+            "input_tokens": verdict.get("input_tokens"),
+            "output_tokens": verdict.get("output_tokens"),
+            "cost_usd": verdict.get("cost_usd"),
         },
     )
 
@@ -123,6 +129,7 @@ def dispatch(
         "transcript_index": len(lines),
         "context_tokens": current_context,
         "verdict_model": config.verdict_model,
+        "verdict_effort": config.verdict_effort,
         "call_timeout": config.call_timeout,
         "worker_deadline": config.worker_deadline,
     }

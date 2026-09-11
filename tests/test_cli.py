@@ -4,6 +4,7 @@ cannot become a way for anything to see more than the reviewer can."""
 
 import pytest
 
+from crosier import cli
 from crosier.cli import main
 from crosier.journal import record_check
 from crosier.state import SessionState, save_state
@@ -94,3 +95,25 @@ def test_report_shows_a_check_that_was_thrown_away_as_stale(capsys):
     record_check("s1", {"turn": 5, "status": "stale", "delivered_to_agent": False})
     assert main(["report"]) == 0
     assert "discarded" in capsys.readouterr().out
+
+
+def test_report_shows_what_the_reviewer_itself_spent(tmp_path, monkeypatch, capsys):
+    # scope.md open question: a plugin whose whole pitch is saving a session
+    # from wasted work has to be able to say what it cost to run.
+    monkeypatch.setattr(cli, "_latest_session", lambda: "sess")
+    monkeypatch.setattr(cli, "load_state", lambda _s: SessionState(checks_run=2, total_turns=9))
+    monkeypatch.setattr(
+        cli,
+        "read_journal",
+        lambda _s: [
+            {"turn": 3, "status": "proceed", "confidence": "high",
+             "input_tokens": 19843, "output_tokens": 115, "cost_usd": 0.0946},
+            {"turn": 8, "status": "proceed", "confidence": "high",
+             "input_tokens": 10000, "output_tokens": 200, "cost_usd": 0.05},
+        ],
+    )
+    cli.cmd_report(None)
+    out = capsys.readouterr().out
+    assert "29,843" in out
+    assert "315" in out
+    assert "0.14" in out

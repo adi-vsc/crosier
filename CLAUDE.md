@@ -39,11 +39,30 @@ questions, `LOGBOOK.md` is the append-only history including dead ends.
 - **Use `py -3`, not `python`.** Bare `python` on this box is 3.10; Crosier
   requires 3.11+ and `hooks/crosier_hook.py` exits 1 below that, so 37 hook
   tests fail under `python` for reasons that are not bugs.
-- Tests: `py -3 -m pytest tests/` — scope it to `tests/`, because a bare
-  `pytest` also collects the scratch `test_runner.py` files the chat benchmark
-  writes under `benchmark/sessions/` and dies with a usage error.
+- Tests: `py -3 -m pytest`. `pyproject.toml` pins `testpaths = ["tests"]` and
+  excludes `benchmark/`, so a bare run no longer collects the scratch
+  `test_runner.py` files the chat benchmark writes under `benchmark/sessions/`.
 - Secrets live in `.env` (gitignored). Never print a token value, never commit
   one, never put one in a URL that gets written to `.git/config`.
+
+## What a check costs (measured 2026-09-11, not estimated)
+
+Numbers to quote instead of guessing. All from a real 39,409-char excerpt on
+sonnet unless stated.
+
+- Input 19,843 tokens. Of that, 2,385 is the stable cached prefix (system
+  prompt plus CLI baseline) and the rest is the excerpt.
+- The cached prefix has a **1 hour** TTL and is read at 0.1x, so shortening the
+  rubric prompt is not a cost lever. The excerpt is.
+- A rendered excerpt is **2.26 chars per token**, not 4: 89.5% of it is tool
+  traffic, which tokenizes far denser than prose.
+- Composition of a real excerpt: tool_result 59.2% of chars, tool_use 30.3%,
+  user 5.6%, assistant 4.7%.
+- Production windows average 33,344 chars and hit `EXCERPT_CHAR_CAP` in 9 of 13
+  sampled positions. The cap is the operative knob.
+- `--effort` decides output tokens and latency: CLI default 8,322 out / 93.0s /
+  $0.1676, `medium` 1,893 out / 25.1s / $0.1124, `low` 115 out / 3.7s / $0.0946.
+  `config.verdict_effort` sets it; None leaves the CLI default.
 
 ## Benchmarks
 

@@ -22,3 +22,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
+norecursedirs = ["benchmark", ".venv", "build", "dist", "graphify-out", ".crosier"]

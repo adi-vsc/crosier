@@ -48,6 +48,7 @@ def run_job(job: dict) -> dict:
             excerpt,
             model=job.get("verdict_model", "sonnet"),
             timeout=job.get("call_timeout", 45),
+            effort=job.get("verdict_effort"),
             previous_flag=job.get("previous_flag"),
         )
         if excerpt.strip()

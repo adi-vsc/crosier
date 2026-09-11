@@ -286,3 +286,30 @@ def test_evidence_match_treats_backticks_as_quotes():
     excerpt = "[assistant] Housekeep skill (`SKILL.md`) now has a `Graphify` section."
     verdict = verify_evidence(_flag("skill ('SKILL.md') now has a 'Graphify' section"), excerpt)
     assert verdict["evidence_verified"] is True
+
+
+def test_generate_verdict_forwards_the_effort_level_to_the_cli():
+    with patch("crosier.verdict.run_claude") as run:
+        run.return_value = {"result": '{"status": "proceed", "confidence": "high"}',
+                            "structured_output": None}
+        generate_verdict("[goal] ship it", effort="low")
+    assert run.call_args.kwargs["effort"] == "low"
+
+
+def test_generate_verdict_reports_what_the_call_spent():
+    # `crosier report` and any budget claim need the real figures, not an
+    # estimate from the excerpt length: measured chars-per-token on a digest
+    # is 2.26, not the 4 the heuristic assumed.
+    with patch("crosier.verdict.run_claude") as run:
+        run.return_value = {
+            "result": '{"status": "proceed", "confidence": "high"}',
+            "structured_output": None,
+            "input_tokens": 19843,
+            "cached_input_tokens": 2385,
+            "output_tokens": 115,
+            "cost_usd": 0.0946,
+        }
+        verdict = generate_verdict("[goal] ship it")
+    assert verdict["input_tokens"] == 19843
+    assert verdict["output_tokens"] == 115
+    assert verdict["cost_usd"] == 0.0946

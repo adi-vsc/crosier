@@ -15,7 +15,12 @@ REPETITION_WINDOW = 10
 
 # Fallback only, for transcripts that report no usage. Real context growth is
 # read from the transcript's own token counts wherever they are available.
-CHARS_PER_TOKEN = 4
+# Calibrated against a billed call, not against prose: a real 39,409-char
+# excerpt was charged 17,456 input tokens, so 2.26 chars per token. Prose runs
+# nearer 4, but 89.5% of an excerpt is tool traffic - JSON arguments and command
+# output - which tokenizes much denser. At 4 this trigger waited for 160,000
+# chars of growth to stand in for 40,000 tokens, roughly 1.8x too patient.
+CHARS_PER_TOKEN = 2.26
 
 # A window is "bulk work" when one tool owns most of it but keeps hitting
 # different targets. Six of ten is dominance; three fifths of those being

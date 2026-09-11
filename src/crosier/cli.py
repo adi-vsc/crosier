@@ -102,6 +102,7 @@ def cmd_report(_args) -> int:
     flagged = [e for e in entries if e.get("status") == "flag"]
     shown = [e for e in flagged if e.get("delivered_to_agent")]
     print(f"  verdicts in:  {len(entries)}  ({len(flagged)} flagged, {len(shown)} shown to the agent)")
+    _print_spend(entries)
     print()
     for entry in entries:
         context = entry.get("context_tokens")
@@ -112,6 +113,29 @@ def cmd_report(_args) -> int:
             detail += f"  evidence_verified={entry.get('evidence_verified')}"
         print(f"    {detail}  {size}")
     return 0
+
+
+def _total(entries: list, key: str):
+    """Sum a spend field, ignoring checks that never reported one."""
+    values = [e.get(key) for e in entries]
+    return sum(v for v in values if isinstance(v, (int, float)))
+
+
+def _print_spend(entries: list) -> None:
+    """What watching this session cost it.
+
+    A drift checker that hides its own bill is asking to be taken on faith.
+    Older journal lines predate spend reporting and simply contribute nothing.
+    """
+    spent_in = _total(entries, "input_tokens")
+    spent_out = _total(entries, "output_tokens")
+    if not spent_in and not spent_out:
+        return
+    cost = _total(entries, "cost_usd")
+    print(
+        f"  reviewer cost: {spent_in:,} in + {spent_out:,} out tokens"
+        f"  (${cost:.2f})"
+    )
 
 
 def cmd_check(_args) -> int:

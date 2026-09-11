@@ -209,11 +209,15 @@ def _payload(excerpt: str, previous_flag: str | None) -> str:
     return "\n\n".join(parts)
 
 
+SPEND_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens", "cost_usd")
+
+
 def generate_verdict(
     excerpt: str,
     model: str = "sonnet",
     timeout: int = 45,
     previous_flag: str | None = None,
+    effort: str | None = None,
 ) -> dict | None:
     envelope = run_claude(
         system_prompt=build_verdict_prompt(),
@@ -221,6 +225,7 @@ def generate_verdict(
         model=model,
         timeout=timeout,
         json_schema=VERDICT_SCHEMA,
+        effort=effort,
     )
     if envelope is None:
         return None
@@ -229,4 +234,10 @@ def generate_verdict(
         verdict = parse_verdict(envelope.get("result") or "")
     if verdict is None:
         return None
-    return verify_evidence(verdict, excerpt)
+    verdict = verify_evidence(verdict, excerpt)
+    # Carried on the verdict rather than logged here: the worker is not allowed
+    # to write session state, so what a check spent has to travel back with it.
+    for key in SPEND_KEYS:
+        if key in envelope:
+            verdict[key] = envelope[key]
+    return verdict

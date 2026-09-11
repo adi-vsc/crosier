@@ -7,6 +7,7 @@ the model call (one tool batch), which is what the PostToolBatch hook counts."""
 
 from crosier.config import CrosierConfig
 from crosier.heuristic import (
+    CHARS_PER_TOKEN,
     budget_exhausted,
     is_bulk_operation,
     should_escalate,
@@ -163,3 +164,23 @@ def test_budget_stops_escalating_after_the_session_cap():
     state = SessionState(calls_since_check=500, checks_run=3)
     assert budget_exhausted(state, config) is True
     assert should_escalate(state, config) is False
+
+
+def test_chars_per_token_matches_what_a_digest_actually_costs():
+    # Measured on a real 39,409-char excerpt billed by the API: 17,456 tokens
+    # for the excerpt portion, so 2.26 chars per token. The old value of 4 was
+    # calibrated on prose, but 89.5% of an excerpt is tool traffic - JSON
+    # arguments and command output, which tokenize far denser than prose. At 4
+    # the fallback token trigger needed 160,000 chars of growth to fire where
+    # it meant to fire at 90,400.
+    assert 2.0 <= CHARS_PER_TOKEN <= 2.5
+
+
+def test_the_fallback_token_trigger_fires_on_measured_growth():
+    config = CrosierConfig(token_threshold=40_000, min_calls_between_checks=0)
+    state = SessionState()
+    state.calls_since_check = 1
+    state.chars_since_check = int(40_000 * 2.26) - 1
+    assert not should_escalate(state, config)
+    state.chars_since_check = int(40_000 * 2.5) + 1
+    assert should_escalate(state, config)

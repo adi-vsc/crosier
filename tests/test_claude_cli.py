@@ -177,3 +177,54 @@ def test_kill_active_kills_the_in_flight_call(mock_kill):
     finally:
         claude_cli._active = None
     mock_kill.assert_called_once_with(proc)
+
+
+@patch("crosier.claude_cli.subprocess.Popen")
+def test_run_claude_omits_effort_by_default_so_behaviour_is_unchanged(mock_popen):
+    mock_popen.return_value = _fake_proc()
+    run_claude("SYSTEM", "payload", "sonnet", 45)
+    assert "--effort" not in _argv(mock_popen)
+
+
+@patch("crosier.claude_cli.subprocess.Popen")
+def test_run_claude_passes_the_requested_effort_level(mock_popen):
+    # Measured on a 39,409-char excerpt, sonnet: default effort spends 8,322
+    # output tokens over 93.0s, which is past `worker_deadline`. At "low" the
+    # same call spends 115 output tokens in 3.7s. The level has to be ours to
+    # set, not the CLI's to default.
+    mock_popen.return_value = _fake_proc()
+    run_claude("SYSTEM", "payload", "sonnet", 45, effort="low")
+    assert _flag_value(_argv(mock_popen), "--effort") == "low"
+
+
+@patch("crosier.claude_cli.subprocess.Popen")
+def test_run_claude_reports_the_calls_token_usage_and_cost(mock_popen):
+    # A reviewer that cannot say what it spent cannot be tuned against a budget.
+    envelope = json.dumps(
+        {
+            "type": "result",
+            "is_error": False,
+            "result": "ok",
+            "total_cost_usd": 0.0946,
+            "usage": {
+                "input_tokens": 2,
+                "cache_creation_input_tokens": 17456,
+                "cache_read_input_tokens": 2385,
+                "output_tokens": 115,
+            },
+        }
+    )
+    mock_popen.return_value = _fake_proc(stdout=envelope)
+    out = run_claude("SYSTEM", "payload", "sonnet", 45)
+    assert out["cost_usd"] == 0.0946
+    assert out["input_tokens"] == 2 + 17456 + 2385
+    assert out["output_tokens"] == 115
+
+
+@patch("crosier.claude_cli.subprocess.Popen")
+def test_run_claude_reports_zero_usage_when_the_envelope_omits_it(mock_popen):
+    mock_popen.return_value = _fake_proc()
+    out = run_claude("SYSTEM", "payload", "sonnet", 45)
+    assert out["input_tokens"] == 0
+    assert out["output_tokens"] == 0
+    assert out["cost_usd"] == 0.0

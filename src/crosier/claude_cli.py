@@ -83,13 +83,20 @@ def run_claude(
     timeout: int,
     json_schema: dict | None = None,
     max_budget_usd: float = MAX_BUDGET_USD,
+    effort: str | None = None,
 ) -> dict | None:
     """Run one isolated headless `claude -p` call.
 
-    Returns the parsed result envelope (`result`, and `structured_output` when a
-    schema was given), or None on any failure — callers treat None as "no
-    result", never as an exception. Instructions travel in the system prompt,
-    data on stdin; the user turn is a one-line pointer to the data.
+    Returns the parsed result envelope (`result`, `structured_output` when a
+    schema was given, and what the call spent), or None on any failure -
+    callers treat None as "no result", never as an exception. Instructions
+    travel in the system prompt, data on stdin; the user turn is a one-line
+    pointer to the data.
+
+    `effort` is the reviewer's thinking budget. Left None the CLI picks, and
+    measured on a cap-sized excerpt that default spent 8,322 output tokens over
+    93.0s, which is past the worker deadline that is supposed to bound it. The
+    level belongs to the caller.
     """
     global _active
     argv = [
@@ -114,6 +121,8 @@ def run_claude(
         "--max-budget-usd",
         str(max_budget_usd),
     ]
+    if effort is not None:
+        argv += ["--effort", effort]
     if json_schema is not None:
         argv += ["--json-schema", json.dumps(json_schema)]
     try:
@@ -167,4 +176,33 @@ def run_claude(
     return {
         "result": result.strip(),
         "structured_output": structured if isinstance(structured, dict) else None,
+        **_spend(envelope),
+    }
+
+
+def _spend(envelope: dict) -> dict:
+    """What this call cost, for the journal and for budget tuning.
+
+    Input is reported as one number because the three buckets are billed at
+    different rates but all of them are context the reviewer had to be given:
+    cached reads are the stable rubric, cache writes are the excerpt, which
+    differs every check and is therefore never read back.
+    """
+    usage = envelope.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+
+    def count(key: str) -> int:
+        value = usage.get(key)
+        return value if isinstance(value, int) else 0
+
+    cost = envelope.get("total_cost_usd")
+    return {
+        "input_tokens": (
+            count("input_tokens")
+            + count("cache_creation_input_tokens")
+            + count("cache_read_input_tokens")
+        ),
+        "cached_input_tokens": count("cache_read_input_tokens"),
+        "output_tokens": count("output_tokens"),
+        "cost_usd": float(cost) if isinstance(cost, (int, float)) else 0.0,
     }

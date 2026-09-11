@@ -135,3 +135,21 @@ def test_kill_switch_env_var(monkeypatch):
     for on in ("1", "true", "yes", "anything"):
         monkeypatch.setenv("CROSIER_DISABLED", on)
         assert disabled_by_env() is True, on
+
+
+def test_verdict_effort_defaults_to_none_so_the_cli_default_is_unchanged(tmp_path):
+    assert load_config(tmp_path).verdict_effort is None
+
+
+def test_verdict_effort_accepts_a_level(tmp_path):
+    (tmp_path / ".crosier.toml").write_text(
+        '[crosier]\nverdict_effort = "low"\n', encoding="utf-8"
+    )
+    assert load_config(tmp_path).verdict_effort == "low"
+
+
+def test_an_unknown_verdict_effort_degrades_to_the_default(tmp_path):
+    (tmp_path / ".crosier.toml").write_text(
+        '[crosier]\nverdict_effort = "turbo"\n', encoding="utf-8"
+    )
+    assert load_config(tmp_path).verdict_effort is None

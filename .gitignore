@@ -18,3 +18,4 @@ benchmark/chat_results*.json
 LOGBOOK.md
 .claude-flow/
 .swarm/
+benchmark/sweeps/

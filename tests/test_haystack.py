@@ -174,3 +174,18 @@ def test_drift_visible_is_decided_at_the_caller_s_cap():
     narrow = build_haystack(case, filler, 33_000, position="middle", char_cap=12_000)
     assert wide["drift_visible"] is True
     assert narrow["drift_visible"] is False
+
+
+def test_padding_does_not_replace_the_case_s_goal():
+    """build_excerpt pins the session's first user prompt as [goal]. Filler
+    prepended ahead of a case supplies that prompt instead, so every padded
+    case was being judged against a goal drawn from another session."""
+    filler = _make_filler(400)
+    case = _drift_case()
+    original = build_excerpt(case["lines"], case.get("since_index", 0))
+    goal = original.split("\n\n")[0]
+    assert goal.startswith("[goal]")
+    for position in ("recent", "middle"):
+        built = build_haystack(case, filler, 20_000, position=position)
+        padded = build_excerpt(built["lines"], built["since_index"])
+        assert padded.split("\n\n")[0] == goal, position

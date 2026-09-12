@@ -1,8 +1,8 @@
 {
   "name": "crosier",
   "owner": {
-    "name": "<OWNER>",
-    "url": "https://github.com/<OWNER>"
+    "name": "adi-vsc",
+    "url": "https://github.com/adi-vsc"
   },
   "description": "Install-and-forget direction checks for long Claude Code sessions.",
   "plugins": [

@@ -23,7 +23,7 @@ its answer — so a correction is preventive rather than a post-mortem.
 As a Claude Code plugin. Two lines, from inside Claude Code:
 
 ```
-/plugin marketplace add <OWNER>/crosier
+/plugin marketplace add adi-vsc/crosier
 /plugin install crosier@crosier
 ```
 
@@ -37,7 +37,7 @@ The `crosier` CLI (`status`, `report`, `check`) is optional and comes from a
 checkout — it is not on PyPI yet:
 
 ```
-git clone https://github.com/<OWNER>/crosier && cd crosier
+git clone https://github.com/adi-vsc/crosier && cd crosier
 pip install -e .
 ```
 

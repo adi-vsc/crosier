@@ -30,6 +30,20 @@ TOOL_RESULT_TAIL = 400
 _COMMAND_NAME_RE = re.compile(r"<command-name>\s*(\S+?)\s*</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 
+# A record is `[label] text` and a body is rendered verbatim, so a body that
+# itself begins a line with `[goal]` or `[tool_result ...]` forges a record the
+# reviewer cannot tell from a real one. This is not hypothetical: transcripts
+# that quote Crosier's own output carry these markers, and every case in the
+# 33k haystack run reached the reviewer with two `[goal]` lines — the second
+# another session's request — which makes off_goal true by construction.
+# Brackets become parentheses: the text still reaches the reviewer as evidence,
+# it just stops claiming to be structure.
+_FORGED_MARKER_RE = re.compile(
+    r"^\[(goal|latest user instruction|user command|user|assistant"
+    r"|compaction summary|tool_use[^\]\n]*|tool_result[^\]\n]*)\]",
+    re.MULTILINE,
+)
+
 
 def _cap(text: str, limit: int) -> str:
     text = text.strip()
@@ -159,7 +173,8 @@ def _user_prompts(lines: list) -> list:
 
 
 def _render(label: str, text: str) -> str:
-    return f"[{label}] {text}"
+    """`label` is ours; `text` is untrusted and must not be able to look like a label."""
+    return f"[{label}] {_FORGED_MARKER_RE.sub(r'(\1)', text)}"
 
 
 def build_excerpt(lines: list, since_index: int, char_cap: int = EXCERPT_CHAR_CAP) -> str:

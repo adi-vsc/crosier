@@ -62,7 +62,26 @@ sonnet unless stated.
   sampled positions. The cap is the operative knob.
 - `--effort` decides output tokens and latency: CLI default 8,322 out / 93.0s /
   $0.1676, `medium` 1,893 out / 25.1s / $0.1124, `low` 115 out / 3.7s / $0.0946.
-  `config.verdict_effort` sets it; None leaves the CLI default.
+  `config.verdict_effort` sets it and now defaults to `low`, which scores
+  27/27 recall, 9/9 category and 0/27 false positives on the synthetic corpus
+  against 1 false positive run of 27 for the CLI default. `"none"` in the
+  TOML hands the choice back to the CLI.
+
+## Benchmark hazards learned the hard way
+
+- **Padding a case changes its goal.** `build_excerpt` pins a session's first
+  user prompt as `[goal]`. `benchmark/haystack.py` grows a small case with real
+  filler, and prepending that filler handed the reviewer another session's goal,
+  which makes `off_goal` true of every padded case by construction: a run came
+  back with a false positive rate of 9/9. Fixed, but the shape of the mistake
+  generalises. Any corpus transform has to be checked against what the digest
+  pins, not only against what it appends.
+- **A too-good or too-bad rate is a harness bug until proven otherwise.** Both
+  100% false positives and a perfect score were harness artifacts here before
+  they were findings.
+- **`drift_visible` is only meaningful at the cap the run actually uses.** It
+  was computed at the default 40,000 cap regardless of `--char-cap`, so every
+  truncation experiment reported its drift intact.
 
 ## Benchmarks
 

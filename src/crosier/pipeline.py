@@ -92,6 +92,8 @@ def _journal(session_id, state, result, verdict, delivered, stop_gate=False) -> 
             "category": verdict.get("category"),
             "confidence": verdict.get("confidence"),
             "flagged_claim": verdict.get("flagged_claim"),
+            "reason": verdict.get("reason"),
+            "evidence": verdict.get("evidence"),
             "evidence_verified": verdict.get("evidence_verified"),
             "delivered_to_agent": delivered,
             "context_tokens": result.get("context_tokens"),

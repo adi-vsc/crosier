@@ -734,6 +734,9 @@ def test_stop_gate_counts_as_a_check_and_is_journalled(tmp_path, monkeypatch, ca
     assert len(entries) == 1
     assert entries[0]["stop_gate"] is True
     assert entries[0]["delivered_to_agent"] is True
+    # The per-turn benchmark reads why a draft was held, not only that it was.
+    assert entries[0]["evidence"] == FLAG["evidence"]
+    assert "reason" in entries[0]
 
 
 def test_stop_gate_steps_aside_when_a_waiting_flag_already_continues_the_turn(tmp_path, monkeypatch, capsys):

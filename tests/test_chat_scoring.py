@@ -70,6 +70,14 @@ def test_a_torn_snapshot_is_carried_to_the_row():
     assert rows[0]["torn"] is True
 
 
+def test_a_continuation_no_journal_entry_explains_is_counted_as_unattributed():
+    # If journal turns drift from BENCH_TURN, continuations stop being attributed.
+    # That has to be visible, not silently scored as "continued by nothing".
+    stops = [_stop(2, "d"), _stop(2, "f", active=True)]
+    s = summarize_arm(turn_rows(stops, {"d": PASS_ALL, "f": PASS_ALL}, DUE, [_gate(3)]))
+    assert s["continued_unattributed"] == 1
+
+
 def test_newly_bad_separates_a_fresh_failure_from_one_carried_forward():
     stops = [_stop(2, "t2"), _stop(3, "t3")]
     rows = turn_rows(stops, {"t2": FAIL_B, "t3": FAIL_B}, DUE, [])

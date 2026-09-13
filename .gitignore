@@ -14,6 +14,8 @@ benchmark/results.json
 .codebase-memory/
 benchmark/sessions/
 benchmark/chat_results*.json
+benchmark/sessions_v2/
+benchmark/chat_v2_results*.json
 .env
 LOGBOOK.md
 .claude-flow/

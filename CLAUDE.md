@@ -5,6 +5,35 @@ with a second opinion from a reviewer that has never seen the session. Read
 `CHANGELOG.md` for what shipped and `scope.md` (gitignored, local) for open
 questions and decisions.
 
+## What Crosier is for — read this first
+
+The target behaviour already happens by hand in the sessions that build
+Crosier. After enough turns the agent loses accuracy and efficiency: it builds
+on its own earlier output as if that were settled. The user then says "spawn a
+Sonnet subagent to attack this". The subagent gets the decision and its evidence,
+with no history. It finds what is wrong, and the agent gets back on track.
+
+Crosier exists to produce that effect without the user asking, and to do it:
+
+- **Before the answer is delivered, not after.** Today the bad message ships,
+  the user reads it, and only then asks for a second look. Detection after
+  delivery is the failure being replaced. The Stop gate is the first attempt at
+  "before"; a PreToolUse gate is the next candidate.
+- **With far fewer tokens.** Current cost is in "What a check costs" below. A
+  check that fires on every turn, or reads mostly tool traffic, is the problem
+  being solved, not an acceptable baseline.
+- **Only when it matters.** A second look on a good answer costs tokens and can
+  talk the agent out of a correct result. False blocks count against Crosier.
+
+Measure it on real multi-turn sessions (`benchmark/chat`, v2): bad drafts
+intercepted before delivery, false blocks, reviewer tokens, added latency. Not
+detection accuracy on labelled excerpts.
+
+Not settled: what the manual loop's reviewer actually reads is a short brief of
+the decision with locators, written by the agent under review, not a transcript
+excerpt. Whether a brief can replace the excerpt is open in `scope.md`. The
+author of a brief can leave out exactly the thing that is wrong.
+
 ## Log every major change
 
 `LOGBOOK.md` (gitignored, local) is the project's step-by-step record: what was

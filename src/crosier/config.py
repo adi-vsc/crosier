@@ -25,6 +25,7 @@ DEFAULTS: dict = {
     "staleness_line_limit": 150,
     "call_timeout": 60,
     "worker_deadline": 90,
+    "stop_gate": False,
 }
 
 VALID_ANNOUNCE = {"always", "on-flag"}
@@ -93,6 +94,12 @@ class CrosierConfig:
     call_timeout: int = 60
     worker_deadline: int = 90
 
+    # Review a risky final answer synchronously at Stop and block the turn on a
+    # flag, so the agent revises before the answer stands. Off by default: it
+    # holds the user's prompt for the length of a reviewer call, and it is the
+    # one place Crosier's verdict is not merely advisory.
+    stop_gate: bool = False
+
 
 def _coerce(values: dict) -> dict:
     """A hand-edited TOML can hold anything. A bad value degrades to the
@@ -123,8 +130,9 @@ def _coerce(values: dict) -> dict:
         values["verdict_effort"] = None
     elif values.get("verdict_effort") not in VALID_EFFORT:
         values["verdict_effort"] = DEFAULTS["verdict_effort"]
-    if not isinstance(values.get("enabled"), bool):
-        values["enabled"] = DEFAULTS["enabled"]
+    for key in ("enabled", "stop_gate"):
+        if not isinstance(values.get(key), bool):
+            values[key] = DEFAULTS[key]
     return values
 
 

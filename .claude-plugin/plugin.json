@@ -31,7 +31,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
-            "timeout": 10
+            "timeout": 90
           }
         ]
       }

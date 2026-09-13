@@ -31,7 +31,19 @@ def _meets_confidence(verdict: dict, minimum: str) -> bool:
     return have >= need
 
 
-def flag_text(verdict: dict) -> str:
+# The gate holds the turn, so unlike a mid-turn flag it has to say what ending
+# the turn now requires. It still leaves the call to the agent: a blind reviewer
+# does not get to overrule a correct answer, only to make it be looked at twice.
+GATE_SUFFIX = (
+    "Your final answer was held for this before the user sees it. The reviewer is zero-context: "
+    "it cannot see this repository, the environment, or what you already ruled out. "
+    "Run the suggested check if one is given. If the concern holds, correct the answer. "
+    "If it does not, restate the answer unchanged and dismiss this in one line. "
+    "Do not reply to this note or justify earlier turns."
+)
+
+
+def flag_text(verdict: dict, suffix: str = ADVISORY_SUFFIX) -> str:
     claim = verdict.get("flagged_claim") or "an assumption in the recent work"
     category = verdict.get("category")
     label = f" ({category})" if category else ""
@@ -42,7 +54,7 @@ def flag_text(verdict: dict) -> str:
         parts.append(f"Evidence from the session: \"{verdict['evidence']}\".")
     if verdict.get("suggested_check"):
         parts.append(f"Suggested check: {verdict['suggested_check']}.")
-    parts.append(ADVISORY_SUFFIX)
+    parts.append(suffix)
     return " ".join(parts)
 
 
@@ -72,6 +84,22 @@ def hook_output(
     return {
         "hookSpecificOutput": {"hookEventName": event, "additionalContext": flag_text(verdict)},
         "systemMessage": f"Crosier flagged: {claim}",
+    }
+
+
+def gate_output(verdict: dict | None, min_flag_confidence: str) -> dict | None:
+    """A Stop block for a flag worth holding the turn for, or None to let it stand.
+
+    Stop takes top-level `decision`/`reason`, not hookSpecificOutput
+    (code.claude.com/docs/en/hooks, "Stop decision control").
+    """
+    if not verdict or verdict.get("status") != "flag" or not _meets_confidence(verdict, min_flag_confidence):
+        return None
+    claim = verdict.get("flagged_claim") or "an assumption in the recent work"
+    return {
+        "decision": "block",
+        "reason": flag_text(verdict, GATE_SUFFIX),
+        "systemMessage": f"Crosier held the answer for a second look: {claim}",
     }
 
 

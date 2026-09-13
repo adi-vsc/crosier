@@ -116,6 +116,11 @@ sonnet unless stated.
 - **Flags are advisory and closed to debate.** A note that reads as a challenge
   gets argued with; one that reads as a mandate gets working debugging
   abandoned. Finish the step in progress, then act or dismiss in one line.
+  **Deliberate exception: `stop_gate`** (config, default off). It reviews a risky
+  final answer synchronously at Stop and returns `decision: block`, so the hook
+  holds the turn and the agent must look again before it ends. It still fails
+  open, runs at most once per turn (`stop_hook_active`), and its reason lets the
+  agent keep a correct answer.
 - **A flag whose evidence quote is not found in the excerpt is demoted** and
   does not interrupt. That mechanical check is what a sampling panel would
   otherwise be bought for.

@@ -599,6 +599,153 @@ def test_a_completed_check_is_written_to_the_journal(tmp_path, monkeypatch, caps
     assert entries[0]["context_tokens"] == 51000
 
 
+# --- stop gate: a synchronous review of the final answer -------------------------
+
+
+class _Reviewer:
+    """Stands in for generate_verdict; records the excerpts it was shown."""
+
+    def __init__(self, verdict=None, raises=None):
+        self.verdict = verdict
+        self.raises = raises
+        self.excerpts = []
+
+    def __call__(self, excerpt, **kwargs):
+        self.excerpts.append(excerpt)
+        self.kwargs = kwargs
+        if self.raises:
+            raise self.raises
+        return self.verdict
+
+
+def _gated_turn(tmp_path, **config):
+    s = Session(tmp_path)
+    _config(s, stop_gate=True, **config)
+    s.prompt("fix the parser")
+    s.batch(name="Edit", target="parser.py")
+    return s
+
+
+def _stop(s, monkeypatch, capsys, reviewer, answer="Fixed — all tests pass.", active=False):
+    with patch("crosier.pipeline.generate_verdict", reviewer):
+        return s.fire("Stop", monkeypatch, capsys, stop_hook_active=active, last_assistant_message=answer)
+
+
+def test_stop_gate_is_off_by_default(tmp_path, monkeypatch, capsys):
+    s = Session(tmp_path)
+    s.prompt("fix the parser")
+    s.batch(name="Edit", target="parser.py")
+    reviewer = _Reviewer(FLAG)
+    out = _stop(s, monkeypatch, capsys, reviewer)
+    assert reviewer.excerpts == []
+    assert "decision" not in (out or {})
+
+
+def test_stop_gate_blocks_a_flagged_final_answer_before_it_stands(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path)
+    reviewer = _Reviewer(FLAG)
+    out = _stop(s, monkeypatch, capsys, reviewer)
+    # Stop and SubagentStop take top-level decision/reason, not hookSpecificOutput
+    # (code.claude.com/docs/en/hooks, "Stop decision control").
+    assert out["decision"] == "block"
+    assert "risky assumption" in out["reason"]
+    assert "hookSpecificOutput" not in out
+    assert len(reviewer.excerpts) == 1
+    assert "Fixed — all tests pass." in reviewer.excerpts[0]
+
+
+def test_stop_gate_lets_a_clean_final_answer_stand(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path)
+    reviewer = _Reviewer(PROCEED)
+    out = _stop(s, monkeypatch, capsys, reviewer)
+    assert len(reviewer.excerpts) == 1
+    assert "decision" not in (out or {})
+    assert "hookSpecificOutput" not in (out or {})
+
+
+def test_stop_gate_never_reviews_a_revision_it_already_forced(tmp_path, monkeypatch, capsys):
+    # stop_hook_active means this Stop is the revision. One per turn, never a loop.
+    s = _gated_turn(tmp_path)
+    reviewer = _Reviewer(FLAG)
+    out = _stop(s, monkeypatch, capsys, reviewer, active=True)
+    assert reviewer.excerpts == []
+    assert "decision" not in (out or {})
+
+
+def test_stop_gate_costs_nothing_on_an_answer_the_prefilter_passes(tmp_path, monkeypatch, capsys):
+    s = Session(tmp_path)
+    _config(s, stop_gate=True)
+    s.prompt("where is the parser?")
+    s.batch(name="Read", target="parser.py")
+    reviewer = _Reviewer(FLAG)
+    _stop(s, monkeypatch, capsys, reviewer, answer="It lives in parser.py.")
+    assert reviewer.excerpts == []
+
+
+def test_stop_gate_fails_open_when_the_review_returns_nothing(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path)
+    out = _stop(s, monkeypatch, capsys, _Reviewer(None))
+    assert "decision" not in (out or {})
+    assert s.state().consecutive_failures == 1
+
+
+def test_stop_gate_fails_open_when_the_review_raises(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path)
+    out = _stop(s, monkeypatch, capsys, _Reviewer(raises=RuntimeError("boom")))
+    assert "decision" not in (out or {})
+    # Caught inside the gate, not only by main(): a crash still counts toward
+    # backing off, and the rest of the invocation still saves state.
+    assert s.state().consecutive_failures == 1
+
+
+def test_stop_gate_does_not_block_on_a_flag_below_the_confidence_floor(tmp_path, monkeypatch, capsys):
+    # verify_evidence demotes an unquotable flag to low; that must not hold a turn.
+    s = _gated_turn(tmp_path)
+    out = _stop(s, monkeypatch, capsys, _Reviewer({**FLAG, "confidence": "low", "evidence_verified": False}))
+    assert "decision" not in (out or {})
+
+
+def test_stop_gate_obeys_the_session_budget(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path, max_checks_per_session=0)
+    reviewer = _Reviewer(FLAG)
+    _stop(s, monkeypatch, capsys, reviewer)
+    assert reviewer.excerpts == []
+
+
+def test_stop_gate_bounds_its_call_below_the_stop_hook_timeout(tmp_path, monkeypatch, capsys):
+    from crosier.pipeline import GATE_CALL_TIMEOUT_CAP
+
+    s = _gated_turn(tmp_path, call_timeout=500)
+    reviewer = _Reviewer(PROCEED)
+    _stop(s, monkeypatch, capsys, reviewer)
+    assert reviewer.kwargs["timeout"] == GATE_CALL_TIMEOUT_CAP
+
+
+def test_stop_gate_counts_as_a_check_and_is_journalled(tmp_path, monkeypatch, capsys):
+    from crosier.journal import read_journal
+
+    s = _gated_turn(tmp_path)
+    _stop(s, monkeypatch, capsys, _Reviewer(FLAG))
+    state = s.state()
+    assert state.checks_run == 1
+    assert state.last_line_index == len(s.lines)
+    assert state.last_flag == "risky assumption"
+    entries = read_journal("s1")
+    assert len(entries) == 1
+    assert entries[0]["stop_gate"] is True
+    assert entries[0]["delivered_to_agent"] is True
+
+
+def test_stop_gate_steps_aside_when_a_waiting_flag_already_continues_the_turn(tmp_path, monkeypatch, capsys):
+    s = _gated_turn(tmp_path)
+    write_result("s1", {"ok": True, "verdict": FLAG, "turn_number": 1, "transcript_index": 3, "created_at": time.time()})
+    reviewer = _Reviewer(FLAG)
+    out = _stop(s, monkeypatch, capsys, reviewer)
+    assert reviewer.excerpts == []
+    assert "risky assumption" in out["hookSpecificOutput"]["additionalContext"]
+    assert "decision" not in out
+
+
 def test_unsupported_interpreter_exits_nonzero_so_the_fallback_chain_advances(monkeypatch, capsys):
     # plugin.json runs `python3 X || python X || py -3 X`. That chain only
     # advances on a nonzero exit, so a hook that always exits 0 pins itself to

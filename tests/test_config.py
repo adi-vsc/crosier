@@ -33,6 +33,19 @@ def test_default_values(tmp_path: Path):
     assert config.worker_deadline >= config.call_timeout + 15
 
 
+def test_stop_gate_defaults_off_and_can_be_enabled(tmp_path: Path):
+    # The gate blocks a turn, which breaks the advisory-only invariant; nobody
+    # gets that without asking for it.
+    assert load_config(tmp_path).stop_gate is False
+    (tmp_path / ".crosier.toml").write_text('[crosier]\nstop_gate = true\n')
+    assert load_config(tmp_path).stop_gate is True
+
+
+def test_a_non_boolean_stop_gate_stays_off(tmp_path: Path):
+    (tmp_path / ".crosier.toml").write_text('[crosier]\nstop_gate = "yes"\n')
+    assert load_config(tmp_path).stop_gate is False
+
+
 def test_overrides_from_toml_file(tmp_path: Path):
     (tmp_path / ".crosier.toml").write_text(
         '[crosier]\n'

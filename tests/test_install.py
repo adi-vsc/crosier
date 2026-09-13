@@ -56,8 +56,28 @@ def test_merge_writes_a_short_timeout_on_hook_entries(tmp_path: Path):
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
     for event in HOOK_EVENTS:
+        if event == "Stop":
+            continue
         assert data["hooks"][event][0]["hooks"][0]["timeout"] == HOOK_TIMEOUT_SECONDS
     assert HOOK_TIMEOUT_SECONDS <= 15
+
+
+def test_stop_timeout_outlasts_the_gate_call_in_both_install_paths(tmp_path: Path):
+    # The Stop gate runs a reviewer call inside the hook. A hook Claude Code
+    # cancels at its timeout has its output discarded, which fails open but also
+    # throws the paid-for verdict away, so the hook timeout must cover the call
+    # plus the kill-tree (10s) and drain (5s) run_claude may spend after it.
+    from crosier.pipeline import GATE_CALL_TIMEOUT_CAP
+    from scripts.install import STOP_HOOK_TIMEOUT_SECONDS
+
+    assert STOP_HOOK_TIMEOUT_SECONDS >= GATE_CALL_TIMEOUT_CAP + 20
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert data["hooks"]["Stop"][0]["hooks"][0]["timeout"] == STOP_HOOK_TIMEOUT_SECONDS
+    manifest = json.loads((Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["hooks"]["Stop"][0]["hooks"][0]["timeout"] == STOP_HOOK_TIMEOUT_SECONDS
 
 
 def _runner(versions: dict):

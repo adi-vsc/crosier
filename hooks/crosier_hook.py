@@ -12,11 +12,21 @@ JSON object.
   context at Stop continues the turn. Skips delivery while already continuing.
 - PreCompact: dispatches unconditionally (compaction is the highest-drift-risk
   moment) and delivers nothing, since its stdout is not injected anywhere.
+- Stop, with `stop_gate` on: the exception to everything above. A final answer
+  the local prefilter calls risky is reviewed synchronously, and a flag returns
+  `decision: block`, so the agent revises before the turn ends. Off by default.
+  At most once per turn: a Stop with `stop_hook_active` is never gated.
 
-Nothing here blocks: the hook's own runtime is pure Python and one process
-spawn. On a supported interpreter it always exits 0 and prints nothing on any
+Outside the Stop gate nothing here blocks: the hook's own runtime is pure
+Python and one process spawn. The gate holds the turn for one reviewer call and
+fails open — an error, a timeout or no verdict lets the answer stand. On a
+supported interpreter the hook always exits 0 and prints nothing on any
 internal failure; the one nonzero exit is an interpreter too old to run on,
 which hands the event to the next command in plugin.json's fallback chain.
+
+Known limit of the gate: in the interactive TUI the draft has already streamed
+when Stop fires, so the user sees the draft and then the correction. Only
+headless/SDK sessions and denied tool calls actually hide bad output.
 """
 
 import json
@@ -31,8 +41,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from crosier.announce import activation_text, merge_system_message  # noqa: E402
 from crosier.config import disabled_by_env, load_config  # noqa: E402
 from crosier.errors import record_failure, should_disable  # noqa: E402
+from crosier.gate import risky_answer_reason  # noqa: E402
 from crosier.heuristic import should_escalate  # noqa: E402
-from crosier.pipeline import consume, dispatch  # noqa: E402
+from crosier.pipeline import consume, dispatch, stop_gate  # noqa: E402
 from crosier.state import load_state, save_state  # noqa: E402
 from crosier.trigger import consume_trigger  # noqa: E402
 from crosier.transcript import (  # noqa: E402
@@ -108,6 +119,20 @@ def run(payload: dict) -> dict | None:
 
     if not state.disabled_for_session:
         current_context = context_tokens(lines)
+        continuing = bool(output and "hookSpecificOutput" in output)
+        if (
+            event == "Stop"
+            and config.stop_gate
+            and not payload.get("stop_hook_active")
+            and not continuing
+            and risky_answer_reason(str(payload.get("last_assistant_message") or ""), lines)
+        ):
+            blocked = stop_gate(
+                session_id, state, config, lines, str(payload.get("last_assistant_message") or ""), current_context
+            )
+            if blocked:
+                earlier = (output or {}).get("systemMessage")
+                output = merge_system_message(blocked, earlier) if earlier else blocked
         # A requested check is the user overriding the threshold; PreCompact is
         # the highest-drift-risk moment in a session. Both still go through
         # dispatch, so the budget and the one-worker-in-flight rule hold.

@@ -11,6 +11,12 @@ runtime is milliseconds. A generous timeout here would only ever mean the user
 staring at a frozen prompt because something went wrong."""
 HOOK_TIMEOUT_SECONDS = 10
 
+"""Stop is the exception: with `stop_gate` on it runs a reviewer call in the
+hook, capped at pipeline.GATE_CALL_TIMEOUT_CAP, plus up to 15s of kill and drain.
+With the gate off the hook still returns in milliseconds, so the longer bound
+costs nothing unless something is actually wrong."""
+STOP_HOOK_TIMEOUT_SECONDS = 90
+
 HOOK_EVENTS = ("UserPromptSubmit", "PostToolBatch", "Stop", "PreCompact")
 
 MIN_VERSION = (3, 11)  # tomllib; below it the hook runs with defaults only
@@ -18,8 +24,8 @@ MIN_VERSION = (3, 11)  # tomllib; below it the hook runs with defaults only
 _VERSION_PROBE = "import sys; print('%d.%d' % sys.version_info[:2])"
 
 
-def _hook_entry(command: str) -> dict:
-    return {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}]}
+def _hook_entry(command: str, timeout: int = HOOK_TIMEOUT_SECONDS) -> dict:
+    return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
 
 
 def _probe(candidate: list) -> tuple | None:
@@ -77,7 +83,8 @@ def merge_hooks_into_settings(settings_path: Path, plugin_root: Path) -> None:
             for h in entry.get("hooks", [])
         )
         if not already_present:
-            existing.append(_hook_entry(command))
+            timeout = STOP_HOOK_TIMEOUT_SECONDS if event == "Stop" else HOOK_TIMEOUT_SECONDS
+            existing.append(_hook_entry(command, timeout))
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")

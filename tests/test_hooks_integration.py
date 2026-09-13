@@ -597,6 +597,13 @@ def test_a_completed_check_is_written_to_the_journal(tmp_path, monkeypatch, caps
     assert entries[0]["category"] == "unverified_claim"
     assert entries[0]["delivered_to_agent"] is True
     assert entries[0]["context_tokens"] == 51000
+    # A flag delivered at Stop continues the turn just as a gate block does; the
+    # benchmark can only attribute a revision if it knows where each landed.
+    assert entries[0]["event"] == "PostToolBatch"
+    assert entries[0]["stop_gate"] is False
+    # `turn` is when the check was dispatched; the delivery can land turns later.
+    assert entries[0]["turn"] == 2
+    assert entries[0]["delivered_turn"] == 1
 
 
 # --- stop gate: a synchronous review of the final answer -------------------------
@@ -733,6 +740,7 @@ def test_stop_gate_counts_as_a_check_and_is_journalled(tmp_path, monkeypatch, ca
     entries = read_journal("s1")
     assert len(entries) == 1
     assert entries[0]["stop_gate"] is True
+    assert entries[0]["event"] == "Stop"
     assert entries[0]["delivered_to_agent"] is True
     # The per-turn benchmark reads why a draft was held, not only that it was.
     assert entries[0]["evidence"] == FLAG["evidence"]

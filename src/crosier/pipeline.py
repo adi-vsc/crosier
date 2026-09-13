@@ -57,7 +57,7 @@ def consume(
         record_failure("verdict discarded as stale")
         # Journalled too: a check that ran and was thrown away still cost the
         # session a call, and a report that hides it under-counts the overhead.
-        _journal(session_id, state, result, {"status": "stale"}, False)
+        _journal(session_id, state, result, {"status": "stale"}, False, event)
         return stale_output(config.announce)
 
     verdict = result.get("verdict")
@@ -72,11 +72,11 @@ def consume(
     if delivered and isinstance(verdict, dict):
         # Remembered so the next reviewer is told the agent already saw it.
         state.last_flag = verdict.get("flagged_claim") or "an assumption in the recent work"
-    _journal(session_id, state, result, verdict, delivered)
+    _journal(session_id, state, result, verdict, delivered, event)
     return output
 
 
-def _journal(session_id, state, result, verdict, delivered, stop_gate=False) -> None:
+def _journal(session_id, state, result, verdict, delivered, event, stop_gate=False) -> None:
     """Record what this check saw, for `crosier report`. Never read back by
     the checking path, so a failed write costs the session nothing."""
     verdict = verdict if isinstance(verdict, dict) else {}
@@ -84,6 +84,10 @@ def _journal(session_id, state, result, verdict, delivered, stop_gate=False) -> 
         session_id,
         {
             "turn": result.get("turn_number", state.total_turns),
+            # Where and when the verdict landed. A flag delivered at Stop
+            # continues the turn exactly as a gate block does.
+            "event": event,
+            "delivered_turn": state.total_turns,
             # A gate check blocked or passed a final answer; an async one only
             # ever advised. The per-turn benchmark scores the two differently.
             "stop_gate": stop_gate,
@@ -212,5 +216,5 @@ def stop_gate(
     if delivered:
         state.last_flag = verdict.get("flagged_claim") or "an assumption in the recent work"
     result = {"turn_number": state.total_turns, "context_tokens": current_context}
-    _journal(session_id, state, result, verdict, delivered, stop_gate=True)
+    _journal(session_id, state, result, verdict, delivered, "Stop", stop_gate=True)
     return output

@@ -34,6 +34,26 @@ The three records have different jobs and do not substitute for each other:
 `CHANGELOG.md` is release-facing and committed, `scope.md` holds live open
 questions, `LOGBOOK.md` is the append-only history including dead ends.
 
+## Check every big decision with a Sonnet subagent
+
+Before acting on a big decision, spawn a subagent with `model: sonnet` and give
+it the decision alone: the options, the choice, the reasoning, and the evidence
+with locators. No conversation history, no "we established". Ask it to attack
+the choice and return what breaks. Act on what survives, and record the kill list
+in the decision's `LOGBOOK.md` entry.
+
+A big decision is one that is expensive to undo or that changes what a number
+means:
+- architecture or hook behaviour (what blocks, what runs synchronously, what the
+  reviewer sees)
+- a benchmark's design: arms, scenarios, oracles, scoring rules, metrics
+- anything that spends real money or hours (a paid run, its size)
+- abandoning or rejecting an approach
+- changing a default that ships
+
+Not big: routine edits, test additions, bug fixes with an obvious cause, status
+reports.
+
 ## Environment
 
 - **Use `py -3`, not `python`.** Bare `python` on this box is 3.10; Crosier

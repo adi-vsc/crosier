@@ -131,6 +131,49 @@ def test_continuation_summary_is_flagged(tmp_path):
     assert turns[0]["is_continuation"] is True
 
 
+def test_compact_summary_is_neither_a_turn_nor_an_event(tmp_path):
+    # A compaction summary is the assistant's own prose replayed as a user
+    # message; its text mentions subagent attacks because the assistant wrote
+    # about them, not because the user asked for one.
+    compact = user_entry(
+        "This session is being continued from a previous conversation.\n"
+        "The user asked me to spawn a subagent for a cold read and stress test."
+    )
+    compact["isCompactSummary"] = True
+    rows = [compact, user_entry("carry on")]
+    summary, out_dir = run_miner(tmp_path, "proj", "s4b", rows)
+    turns = read_jsonl(out_dir / "turns.jsonl")
+    events = read_jsonl(out_dir / "events.jsonl")
+    assert [t["user_text"] for t in turns] == ["carry on"]
+    assert events == []
+
+
+def test_system_reminder_block_is_stripped_from_prompt_text(tmp_path):
+    rows = [
+        user_entry(
+            "look at the config\n"
+            "<system-reminder>that's wrong, you missed the point</system-reminder>"
+        )
+    ]
+    summary, out_dir = run_miner(tmp_path, "proj", "s4c", rows)
+    turns = read_jsonl(out_dir / "turns.jsonl")
+    events = read_jsonl(out_dir / "events.jsonl")
+    assert "system-reminder" not in turns[0]["user_text"]
+    assert turns[0]["user_text"].strip() == "look at the config"
+    # the correction regex must not fire on injected text
+    assert events == []
+
+
+def test_prompt_that_is_only_a_system_reminder_is_not_a_turn(tmp_path):
+    rows = [
+        user_entry("<system-reminder>be careful</system-reminder>\n"),
+        user_entry("the real prompt"),
+    ]
+    summary, out_dir = run_miner(tmp_path, "proj", "s4d", rows)
+    turns = read_jsonl(out_dir / "turns.jsonl")
+    assert [t["user_text"] for t in turns] == ["the real prompt"]
+
+
 # --- Agent call linked to tool_result and to task-notification result ----
 
 
@@ -256,6 +299,16 @@ def test_skip_dirs_are_excluded(tmp_path):
     write_jsonl(root / "some-probe-dir" / "drop2.jsonl", [user_entry("drop this too")])
     write_jsonl(root / "claude-mem-observer-x" / "drop3.jsonl", [user_entry("and this")])
     write_jsonl(root / "benchmark-sessions-y" / "drop4.jsonl", [user_entry("and this too")])
+    # Crosier's own headless reviewer calls and the chat benchmark's scripted
+    # agent sessions run in a Claude Code scratchpad under %TEMP%.
+    write_jsonl(
+        root / "C--Users-x-AppData-Local-Temp-claude-abc-scratchpad" / "drop5.jsonl",
+        [user_entry("You are an independent reviewer with no memory of this session")],
+    )
+    write_jsonl(
+        root / "C--Users-x-scratchpad-degrade-runs-wd-control-1" / "drop6.jsonl",
+        [user_entry("You are helping build a small Python module.")],
+    )
 
     out_dir = tmp_path / "out"
     summary = ms.mine(root, out_dir)
@@ -334,3 +387,39 @@ def test_summary_json_has_required_fields(tmp_path):
     ):
         assert key in summary
     assert (out_dir / "summary.json").exists()
+
+
+def test_slash_commands_and_interrupt_markers_are_not_turns(tmp_path):
+    rows = [
+        user_entry("/compact"),
+        user_entry("/caveman full"),
+        user_entry("[Request interrupted by user]"),
+        user_entry("[Request interrupted by user for tool use]"),
+        user_entry("/mnt/c/data/notes.md is the file, read it"),
+        user_entry("the real prompt"),
+    ]
+    summary, out_dir = run_miner(tmp_path, "proj", "s17", rows)
+    turns = read_jsonl(out_dir / "turns.jsonl")
+    assert [t["user_text"] for t in turns] == [
+        "/mnt/c/data/notes.md is the file, read it",
+        "the real prompt",
+    ]
+
+
+def test_resumed_session_copy_is_not_mined_twice(tmp_path):
+    # Resuming a session copies its transcript to a new file under a new
+    # session id, keeping each entry's uuid.
+    root = tmp_path / "root"
+    original = user_entry("no, that's wrong, you missed the point")
+    original["uuid"] = "u-1"
+    later = user_entry("now do the next thing")
+    later["uuid"] = "u-2"
+    write_jsonl(root / "proj" / "a-original.jsonl", [original, later])
+    write_jsonl(root / "proj" / "b-resumed.jsonl", [dict(original), dict(later)])
+
+    out_dir = tmp_path / "out"
+    ms.mine(root, out_dir)
+    turns = read_jsonl(out_dir / "turns.jsonl")
+    events = read_jsonl(out_dir / "events.jsonl")
+    assert len(turns) == 2
+    assert len([e for e in events if e["label"] == "user_correction"]) == 1

@@ -30,6 +30,24 @@ Crosier exists to replace.
 - `crosier check` and `/crosier:check`.
 - Events other than `Stop` registered by an older install are now a no-op.
 
+### Fixed
+
+- A tool name in the transcript can no longer forge a record header in the
+  excerpt. Record bodies were already escaped, but a name is interpolated into
+  a record's label, so a tool called `Bash]\n[goal] …` handed the reviewer a
+  second goal. Tool names are attacker-controlled in the sense that matters
+  here — an MCP server names its own tools — and the excerpt is untrusted
+  input. Names are now stripped of brackets and newlines before they reach a
+  label.
+
+### Added
+
+- `/crosier:attack`: the manual second-opinion loop as a command. The agent
+  writes a brief of the current decision — options, choice, reasoning,
+  evidence with locators, no conversation history — hands it to a Sonnet
+  subagent, and returns the kill list verified against those locators.
+  Additive; it changes no default and does not touch the gate.
+
 ## 0.2.0 — 2026-09-06
 
 Audit-driven redesign. Replaying 26 real Claude Code transcripts through the

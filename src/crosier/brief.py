@@ -39,7 +39,7 @@ import json
 import re
 from collections import Counter
 
-from crosier.digest import _cap, _compact_args, _is_noise, _block_text, _render, _user_prompts
+from crosier.digest import _cap, _compact_args, _is_noise, _block_text, _render, _safe_label, _user_prompts
 
 GOAL_CHAR_CAP = 600
 INSTRUCTION_CHAR_CAP = 1200
@@ -104,6 +104,10 @@ def _cut(text: str, head: int, tail: int) -> str:
     text = (text or "").strip()
     if len(text) <= head + tail:
         return text
+    # `text[-0:]` is the whole string, so a zero tail has to be handled before
+    # the slice, not by it.
+    if tail <= 0:
+        return text[:head].rstrip()
     return text[:head].rstrip() + "\n…\n" + text[-tail:].lstrip()
 
 
@@ -286,11 +290,17 @@ def _last_test_like(calls: list):
     return None
 
 
-def _render_call(call: dict) -> list:
+def _render_call(call: dict, budget: int | None = None) -> list:
     """Cut sizes follow what the result *is*, not why it was selected: a
     failing result keeps a smaller head and the same tail wherever it came
-    from, because its payload is at the end."""
-    records = [_brief_render(f"tool_use {call['name']}", _compact_args(call["input"]))]
+    from, because its payload is at the end.
+
+    `budget` shrinks the result cut to fit a caller that has less room than
+    the standard sizes need. It is used for one case only — the first
+    evidence item under a cap too small for it — so that "at least one piece
+    of evidence" does not become "no cap at all".
+    """
+    records = [_brief_render(f"tool_use {_safe_label(call['name'])}", _compact_args(call["input"]))]
     if call["result"] is not None:
         label = "tool_result ERROR" if call["is_error"] else "tool_result"
         head, tail = (
@@ -298,6 +308,11 @@ def _render_call(call: dict) -> list:
             if _signals_failure(call)
             else (EVIDENCE_RESULT_HEAD, EVIDENCE_RESULT_TAIL)
         )
+        if budget is not None:
+            room = budget - (len(records[0]) + 2) - (len(label) + 3) - 2
+            room = max(room, 0)
+            head = min(head, room * 2 // 3)
+            tail = min(tail, room - head)
         records.append(_brief_render(label, _cut(call["result"], head, tail)))
     return records
 
@@ -385,8 +400,17 @@ def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> d
     for call, source in candidates:
         rendered = _render_call(call)
         size = sum(len(r) + 2 for r in rendered)
-        if kept and used + size > evidence_budget:
-            break
+        if used + size > evidence_budget:
+            if kept:
+                break
+            # Nothing kept yet. A brief with one cut-down result beats a brief
+            # with none, but it still has to fit: exempting the first item
+            # from the budget entirely made `char_cap` advisory (a 200-char
+            # cap produced 790 chars).
+            rendered = _render_call(call, budget=evidence_budget)
+            size = sum(len(r) + 2 for r in rendered)
+            if size > evidence_budget:
+                break
         kept.append((call, source, rendered))
         used += size
     kept.sort(key=lambda item: item[0]["number"])

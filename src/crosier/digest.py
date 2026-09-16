@@ -45,6 +45,19 @@ _FORGED_MARKER_RE = re.compile(
 )
 
 
+# `_render` escapes a record's *body*. A tool name is interpolated into the
+# record's *label*, where that escaping never reaches it, so a name carrying
+# `]` and a newline closes our label and opens a forged record of its own —
+# the same hole `_FORGED_MARKER_RE` exists to close, one field over. Tool
+# names come from the transcript (an MCP server names its own tools), so they
+# are untrusted like everything else here.
+_LABEL_UNSAFE_RE = re.compile(r"[\[\]\r\n]+")
+
+
+def _safe_label(part) -> str:
+    return _LABEL_UNSAFE_RE.sub(" ", str(part)).strip() or "unknown"
+
+
 def _cap(text: str, limit: int) -> str:
     text = text.strip()
     if len(text) <= limit:
@@ -148,7 +161,7 @@ def _records(lines: list, counter: dict) -> list:
             elif kind == "tool_use":
                 number = counter.setdefault(block.get("id"), len(counter) + 1)
                 name = block.get("name", "unknown")
-                out.append((f"tool_use #{number} {name}", _compact_args(block.get("input", {}))))
+                out.append((f"tool_use #{number} {_safe_label(name)}", _compact_args(block.get("input", {}))))
             elif kind == "tool_result":
                 number = counter.get(block.get("tool_use_id"), "?")
                 text = _block_text(block.get("content", ""))

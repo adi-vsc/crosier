@@ -25,7 +25,7 @@ def test_status_without_a_session_says_so(capsys):
 
 
 def test_status_reports_budget_and_the_last_verdict(capsys):
-    save_state("s1", SessionState(checks_run=3, calls_since_check=4))
+    save_state("s1", SessionState(checks_run=3))
     record_check("s1", {"turn": 7, "status": "flag", "category": "unverified_claim",
                         "flagged_claim": "tests pass", "delivered_to_agent": True})
     assert main(["status"]) == 0
@@ -71,16 +71,6 @@ def test_report_lists_every_check_and_marks_what_the_agent_saw(capsys):
 def test_report_without_a_session_is_not_an_error(capsys):
     assert main(["report"]) == 0
     assert "No Crosier session found" in capsys.readouterr().out
-
-
-def test_check_writes_a_trigger_the_hook_can_claim(capsys):
-    from crosier.trigger import consume_trigger
-
-    assert main(["check"]) == 0
-    assert "requested" in capsys.readouterr().out
-    assert consume_trigger() is True
-    # Claimed once, and only once.
-    assert consume_trigger() is False
 
 
 def test_bare_invocation_prints_help_rather_than_failing(capsys):

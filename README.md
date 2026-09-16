@@ -13,10 +13,11 @@ folklore:
 | A parallel LLM monitor "reduced repetition on loop-prone tasks by 52-62% with approximately 11% overhead" — a feasibility study, and its authors note the benefit is task-type dependent | [Khan & Khan, arXiv:2604.13759](https://arxiv.org/abs/2604.13759) |
 | "Self-correction works well in tasks that can use reliable external feedback" — which is why the reviewer is told to decide a verification claim on the tool result, not on the prose | [Kamoi et al., arXiv:2406.01297](https://arxiv.org/abs/2406.01297) |
 
-Crosier periodically hands a structured excerpt of your session to a fresh,
-zero-context Claude instance for a second opinion, and delivers the answer
-back **inside the turn** — next to a tool result, before the agent writes
-its answer — so a correction is preventive rather than a post-mortem.
+When the agent is about to end a turn with an answer worth acting on, Crosier
+hands a structured excerpt of the session to a fresh, zero-context Claude
+instance for a second opinion. If the reviewer flags a problem, the turn is
+held and the agent looks again **before the answer stands**, so a correction
+is preventive rather than a post-mortem.
 
 ## Install
 
@@ -29,11 +30,11 @@ As a Claude Code plugin. Two lines, from inside Claude Code:
 
 The first line registers this repository as a plugin marketplace (it carries
 `.claude-plugin/marketplace.json`); the second installs the plugin from it and
-registers all four hooks for you. This is the supported path.
+registers its `Stop` hook for you. This is the supported path.
 
 The plugin is self-contained: it needs no `pip install` and no dependencies.
 
-The `crosier` CLI (`status`, `report`, `check`) is optional and comes from a
+The `crosier` CLI (`status`, `report`) is optional and comes from a
 checkout — it is not on PyPI yet:
 
 ```
@@ -57,24 +58,18 @@ defaults while silently ignoring your `.crosier.toml`, so the hook declines the
 event instead; the install command tries `python3`, then `python`, then `py -3`,
 and takes the first one new enough.
 
-No configuration is required — defaults are safe and on by default. On its
-first hook event of a session Crosier prints one line to your screen saying it
-is running and when the first check is due, and then says nothing until it has
-something to say.
+No configuration is required — defaults are safe and on by default. At the end
+of the first turn of a session Crosier prints one line to your screen saying it
+is running, and then says nothing until it has something to say.
 
 ## Checking on it, and turning it off
 
 ```
 crosier status     # on? budget left? what did it last say? where are the files?
 crosier report     # every check this session made, and what was flagged
-crosier check      # run a direction check now instead of at the next threshold
 ```
 
-Both need the CLI installed (see above). `crosier check` leaves a request that
-the session's next hook event picks up, so the check starts within one model
-call. Inside Claude Code the plugin also ships `/crosier:check`, which runs the
-same command for you (it needs the CLI too) — the fastest way to see Crosier work on your very first
-session rather than waiting for the first threshold.
+Both need the CLI installed (see above).
 
 To switch Crosier off for one session without editing anything, start Claude
 with the kill switch set:
@@ -89,22 +84,18 @@ no output. To switch it off for a project instead, set `enabled = false` in
 
 ## How it works
 
-1. A single hook script listens on four events. `PostToolBatch` is the
-   clock: it fires once per model call, before the next request. It counts
-   calls, context growth (from the token counts the transcript already
-   carries) and tool-call repetition — pure Python, no network call.
-   `UserPromptSubmit` counts turns. `Stop` counts the final call.
-   `PreCompact` always forces a check, because compaction is the
-   highest-drift-risk moment in a session.
-2. When a threshold trips, the hook builds an **excerpt** and hands it to a
-   **detached background worker, then returns** — typically in well under
-   100ms. It never waits for a model.
+1. A single hook script listens on one event, `Stop`. It decides locally, in
+   pure Python with no network call, whether the final answer is worth a
+   review: the answer claims an outcome (tests pass, done, fixed, ready), or
+   the turn edited files. Every other answer passes at zero cost.
+2. A risky answer is reviewed **synchronously**, inside the hook. The user's
+   prompt waits for one reviewer call, capped at 60 seconds.
 3. The excerpt is built mechanically, not by a summarising model. It is a
    chronological, speaker-labelled digest of the recent session: `[user]`,
    `[assistant]`, `[tool_use #N Name]` with argument previews,
    `[tool_result #N | size]` cut to head and tail, with the original
-   request pinned on top as `[goal]`. Around 3-4k tokens.
-4. The worker makes **one** isolated headless `claude` call (Sonnet by
+   request pinned on top as `[goal]`, and the final answer as its last record.
+4. The hook makes **one** isolated headless `claude` call (Sonnet by
    default) that sees nothing but Crosier's own system prompt and the
    excerpt: no CLAUDE.md, no hooks, no plugins, no MCP servers, no tools, no
    saved session. Measured against a default `claude -p` in a project
@@ -114,14 +105,18 @@ no output. To switch it off for a project instead, set `enabled = false` in
    modes, or `proceed`. A flag must quote its evidence verbatim from the
    excerpt; the quote is checked mechanically, and a flag whose quote is not
    found is demoted to a guess and never shown to the agent.
-6. The verdict lands in a result file. The **next** hook invocation — usually
-   the next `PostToolBatch`, seconds later — picks it up and injects it as
-   context next to the tool result. At `Stop`, a flag is delivered as
-   feedback that continues the turn so the agent acts on it before the answer
-   stands; a clean verdict is never delivered there.
+6. A flag returns `decision: block`, so the agent revises before the turn
+   ends. The reason lets it keep a correct answer: restate it unchanged and
+   dismiss the flag in one line. A clean verdict lets the answer stand
+   silently. The gate runs at most once per turn: the revision it forces is
+   never reviewed again.
 
-Clean verdicts are shown to you on screen and never to the agent, so a
-check that finds nothing costs the session nothing.
+The gate fails open. A reviewer call that errors, times out or returns
+nothing lets the answer stand.
+
+Known limit: in the interactive terminal the draft has already streamed when
+`Stop` fires, so you see the draft and then the correction. Only headless and
+SDK sessions truly hide the bad answer.
 
 ## What the reviewer looks for
 
@@ -138,31 +133,23 @@ target, no progress), `padding`.
 A reviewer that sees only an excerpt is a reviewer that cannot see your
 repository, and most of the design is about not letting it act like it can.
 
-- It never tells the agent to abandon work in progress or skip a step that
-  failed, and the announcement says so out loud — a flag is advisory, and
-  the agent is told to finish the step it is on first.
-- The announcement also forbids arguing with it. Without that, the main agent
+- A blind reviewer does not get to overrule a correct answer, only to make it
+  be looked at twice. The block reason says so, and tells the agent it may
+  restate the answer unchanged.
+- The block reason also forbids arguing with it. Without that, the main agent
   spends its next turn justifying itself, which costs more than the drift did.
 - It is told what it flagged last time, so a concern the agent already
   answered is not raised again as if new.
 - **Low-confidence flags are suppressed** (`min_flag_confidence`), and a flag
   without verifiable evidence is low-confidence by definition.
-- A **bulk sweep is not a loop.** Ten `Edit` calls across ten files is a
-  refactor; ten across one file is a loop. The repetition signal reads the
-  arguments, not just the tool name.
 - Everything the reviewer sees is **untrusted input**. A tainted
   `package.json` the agent read is in the transcript verbatim, so the excerpt
   is fenced, structural tags are flattened, and override phrases are
   neutralized on the way in. The verdict's free-text fields are scrubbed and
   length-capped on the way out, because they get printed into your session.
-- Checks are **budgeted** (`max_checks_per_session`) and rate-limited
-  (`min_calls_between_checks`), and only one worker runs per session at a
-  time. Each headless call also carries a hard dollar cap.
-- The worker **kills itself** at `worker_deadline`, taking its `claude`
-  process tree with it. Force-quitting the main session cannot leave a
-  headless process resident.
-- A verdict that arrives after the session has moved on (more than
-  `staleness_line_limit` transcript lines) is discarded instead of announced.
+- Checks are **budgeted** (`max_checks_per_session`). Each headless call also
+  carries a hard dollar cap, and a call past its timeout has its `claude`
+  process tree killed.
 - If the transcript format stops looking like something Crosier can parse
   (it is internal and undocumented), it backs off and logs rather than
   paying for a review of nothing.
@@ -177,34 +164,17 @@ Crosier's own files live under `~/.claude/crosier/` (override with
 ```toml
 [crosier]
 enabled = true
-announce = "always"          # "always" | "on-flag"  (clean verdicts: on screen only)
 verdict_model = "sonnet"
-
-call_threshold = 30          # model calls since the last check
-first_check_call_threshold = 12  # the FIRST check of a session fires here
-turn_threshold = 10          # user prompts since the last check
-token_threshold = 40000      # context growth since the last check
-repetition_threshold = 0.4
-
-max_checks_per_session = 12  # hard budget per session
-min_calls_between_checks = 8 # cooldown after any check
+verdict_effort = "low"          # "low".."max", or "none" for the CLI default
+max_checks_per_session = 12     # hard budget per session
 min_flag_confidence = "medium"  # "low" | "medium" | "high"
-staleness_line_limit = 150   # drop a verdict this far behind the session
-call_timeout = 60            # the headless call
-worker_deadline = 90         # worker self-destructs here
+call_timeout = 60               # the headless call, capped at 60 inside the hook
 ```
 
 An unparseable file, or a bad value for any single key, falls back to the
-default for that key rather than taking your turn down with it.
-
-`first_check_call_threshold` exists because the damage a long session never
-recovers from is committed early — models "make assumptions in early turns and
-prematurely attempt to generate final solutions, on which they overly rely"
-([arXiv:2505.06120](https://arxiv.org/abs/2505.06120)) — and under one flat
-threshold that stretch is the only part of a session nobody looks at. It moves
-the first check earlier; it does not add checks. `max_checks_per_session` and
-`min_calls_between_checks` are unchanged and still govern, so a session's total
-spend is the same.
+default for that key rather than taking your turn down with it. Keys from
+earlier versions (`call_threshold`, `stop_gate`, `worker_deadline`, ...) are
+ignored.
 
 `CROSIER_DISABLED=1` in the environment turns Crosier off for that session
 regardless of any config file.

@@ -17,8 +17,8 @@ Crosier exists to produce that effect without the user asking, and to do it:
 
 - **Before the answer is delivered, not after.** Today the bad message ships,
   the user reads it, and only then asks for a second look. Detection after
-  delivery is the failure being replaced. The Stop gate is the first attempt at
-  "before"; a PreToolUse gate is the next candidate.
+  delivery is the failure being replaced. The Stop gate is Crosier's only
+  review; a PreToolUse gate is the next candidate.
 - **With far fewer tokens.** Current cost is in "What a check costs" below. A
   check that fires on every turn, or reads mostly tool traffic, is the problem
   being solved, not an acceptable baseline.
@@ -83,6 +83,27 @@ means:
 Not big: routine edits, test additions, bug fixes with an obvious cause, status
 reports.
 
+## How big changes are executed
+
+For any big change (same definition as above), in this order:
+
+1. **Stress test the plan first.** The plan, including the agent's own proposals,
+   goes to a Sonnet subagent as a quoted artifact with locators and no history.
+   The plan is rewritten around what survives before any code is written.
+2. **Run the work as a ruflo swarm.** Initialise with
+   `npx @claude-flow/cli@latest swarm init --topology hierarchical --strategy specialized`
+   and split the plan into independent workstreams that run in parallel where
+   they do not share files (`isolation: "worktree"` when they could collide).
+3. **Engineers are Sonnet; the brain is Opus.** Coding, corpus building and
+   measurement agents run with `model: sonnet` and a self-contained prompt: goal,
+   files, constraints from this document, acceptance test, what to return. Opus
+   (the main session) only plans, integrates, and judges results.
+4. **Review before merge.** Each workstream's diff gets a Sonnet review, and the
+   suite passes under `py -3 -m pytest` before it lands.
+
+Token care applies to agents too: a corpus or transcript job extracts with a
+script first and gives a model only the small slices it must judge.
+
 ## Environment
 
 - **Use `py -3`, not `python`.** Bare `python` on this box is 3.10; Crosier
@@ -139,6 +160,9 @@ sonnet unless stated.
   (`recall_per_run`, `false_positive_rate_per_run`), not the per-case ones,
   for any claim that a change moved a rate: per-case scoring is asymmetric on
   purpose and one flip at 3 repeats moves a whole case.
+- `benchmark/chat/run_chat_v2.py` — on/off A/B at 24 turns with per-turn
+  draft-vs-final scoring (`--agent-effort`, `--reviewer-model`,
+  `--reviewer-effort`). Arms: `off`, `on`.
 - `benchmark/chat/run_chat.py` — on/off A/B. Runs real agent sessions with
   Crosier enabled and disabled against scenarios with reference solutions.
   Costs real money and hours; check the estimate before starting one.
@@ -151,8 +175,8 @@ sonnet unless stated.
   prints nothing on internal failure. The single nonzero exit is the
   interpreter version guard, which exists so `plugin.json`'s
   `python3 || python || py -3` chain advances.
-- **The hook is the only writer of `SessionState`.** The worker never writes
-  it, so a worker killed mid-flight cannot leave half a session behind.
+- **The hook is the only writer of `SessionState`.** It saves state once per
+  invocation, after the gate has returned.
 - **The reviewer is zero-context.** Headless calls run with `--system-prompt`,
   `--setting-sources ""`, `--strict-mcp-config`, `--tools ""`,
   `--no-session-persistence`, a dollar cap, and a neutral working directory.
@@ -162,14 +186,13 @@ sonnet unless stated.
 - **The excerpt is untrusted input.** It reaches the reviewer through
   `sanitize.py`; verdict strings are scrubbed and capped before they are
   printed back into the main session.
-- **Flags are advisory and closed to debate.** A note that reads as a challenge
-  gets argued with; one that reads as a mandate gets working debugging
-  abandoned. Finish the step in progress, then act or dismiss in one line.
-  **Deliberate exception: `stop_gate`** (config, default off). It reviews a risky
-  final answer synchronously at Stop and returns `decision: block`, so the hook
-  holds the turn and the agent must look again before it ends. It still fails
-  open, runs at most once per turn (`stop_hook_active`), and its reason lets the
-  agent keep a correct answer.
+- **Crosier is a Stop gate only.** No background checks (removed 2026-09-13 on
+  the user's decision). A risky final answer is reviewed synchronously at Stop
+  and a flag returns `decision: block`, so the agent looks again before the turn
+  ends. It fails open, runs at most once per turn (`stop_hook_active`), and its
+  reason lets the agent keep a correct answer: a note that reads as a challenge
+  gets argued with, one that reads as a mandate gets a correct answer
+  abandoned.
 - **A flag whose evidence quote is not found in the excerpt is demoted** and
   does not interrupt. That mechanical check is what a sampling panel would
   otherwise be bought for.

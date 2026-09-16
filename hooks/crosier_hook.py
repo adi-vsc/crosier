@@ -1,32 +1,21 @@
 #!/usr/bin/env python3
-"""Claude Code hook entrypoint for every event Crosier listens to. Reads the
-JSON payload on stdin, routes on `hook_event_name`, and prints at most one
-JSON object.
+"""Claude Code hook entrypoint. Crosier listens to one event, Stop. Reads the
+JSON payload on stdin and prints at most one JSON object.
 
-- PostToolBatch: the primary clock. Fires once per model call, before the
-  next request, and its `additionalContext` lands next to the tool result —
-  so a verdict reaches the agent inside the turn, before the answer is done.
-- UserPromptSubmit: counts turns, delivers anything still waiting.
-- Stop: delivers a flag as feedback that continues the turn, so the agent acts
-  before the answer stands. Never delivers a clean verdict there, since any
-  context at Stop continues the turn. Skips delivery while already continuing.
-- PreCompact: dispatches unconditionally (compaction is the highest-drift-risk
-  moment) and delivers nothing, since its stdout is not injected anywhere.
-- Stop, with `stop_gate` on: the exception to everything above. A final answer
-  the local prefilter calls risky is reviewed synchronously, and a flag returns
-  `decision: block`, so the agent revises before the turn ends. Off by default.
-  At most once per turn: a Stop with `stop_hook_active` is never gated.
+At Stop, a final answer the local prefilter calls risky is reviewed
+synchronously, and a flag returns `decision: block`, so the agent revises
+before the turn ends. At most once per turn: a Stop with `stop_hook_active` is
+never gated. Every other answer passes at zero cost.
 
-Outside the Stop gate nothing here blocks: the hook's own runtime is pure
-Python and one process spawn. The gate holds the turn for one reviewer call and
-fails open — an error, a timeout or no verdict lets the answer stand. On a
-supported interpreter the hook always exits 0 and prints nothing on any
-internal failure; the one nonzero exit is an interpreter too old to run on,
-which hands the event to the next command in plugin.json's fallback chain.
+The gate holds the turn for one reviewer call and fails open — an error, a
+timeout or no verdict lets the answer stand. On a supported interpreter the
+hook always exits 0 and prints nothing on any internal failure; the one nonzero
+exit is an interpreter too old to run on, which hands the event to the next
+command in plugin.json's fallback chain.
 
-Known limit of the gate: in the interactive TUI the draft has already streamed
-when Stop fires, so the user sees the draft and then the correction. Only
-headless/SDK sessions and denied tool calls actually hide bad output.
+Known limit: in the interactive TUI the draft has already streamed when Stop
+fires, so the user sees the draft and then the correction. Only headless/SDK
+sessions and denied tool calls actually hide bad output.
 """
 
 import json
@@ -38,23 +27,18 @@ MIN_PYTHON = (3, 11)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from crosier.announce import activation_text, merge_system_message  # noqa: E402
+from crosier.announce import activation_text, cooldown_text, hard_stop_text, merge_system_message  # noqa: E402
 from crosier.config import disabled_by_env, load_config  # noqa: E402
-from crosier.errors import record_failure, should_disable  # noqa: E402
-from crosier.gate import risky_answer_reason  # noqa: E402
-from crosier.heuristic import should_escalate  # noqa: E402
-from crosier.pipeline import consume, dispatch, stop_gate  # noqa: E402
-from crosier.state import load_state, save_state  # noqa: E402
-from crosier.trigger import consume_trigger  # noqa: E402
-from crosier.transcript import (  # noqa: E402
-    context_tokens,
-    delta_text,
-    extract_tool_calls,
-    read_transcript_lines,
-    schema_health,
+from crosier.errors import (  # noqa: E402
+    COOLDOWN_REVIEWS,
+    record_failure,
+    should_cooldown,
+    should_hard_stop,
 )
-
-HANDLED_EVENTS = ("UserPromptSubmit", "PostToolBatch", "Stop", "PreCompact")
+from crosier.gate import risky_answer_reason  # noqa: E402
+from crosier.pipeline import stop_gate  # noqa: E402
+from crosier.state import SessionState, load_state, save_state  # noqa: E402
+from crosier.transcript import context_tokens, read_transcript_lines, schema_health  # noqa: E402
 
 
 def _emit(output: dict | None) -> None:
@@ -62,28 +46,65 @@ def _emit(output: dict | None) -> None:
         print(json.dumps(output))
 
 
-def _count_new_material(state, lines) -> None:
-    """Advance the counting cursor over lines no hook has seen yet."""
-    new_lines = lines[state.counted_line_index :]
-    state.counted_line_index = len(lines)
-    state.chars_since_check += len(delta_text(new_lines))
-    tool_calls = [call for entry in new_lines for call in extract_tool_calls(entry)]
-    state.recent_tool_calls = (state.recent_tool_calls + tool_calls)[-10:]
-
-
-def _context_growth(state, current_context) -> int | None:
-    if current_context is None:
+def _back_off(state: SessionState) -> dict | None:
+    """Cross into a cooldown, or into a hard stop past it -- decided from
+    state.total_failures, which the caller has already updated for this
+    turn's failure(s). Returns the one-line systemMessage for the
+    transition, or None when the cooldown message has already been shown
+    once this session. Never a decision/block: a backed-off gate has
+    nothing to say about the answer, only about itself."""
+    if should_hard_stop(state.total_failures):
+        state.disabled_for_session = True
+        state.cooldown_remaining_reviews = 0
+        record_failure(f"hard stop after {state.total_failures} failures this session")
+        return merge_system_message(None, hard_stop_text())
+    state.consecutive_failures = 0
+    state.cooldown_remaining_reviews = COOLDOWN_REVIEWS
+    record_failure(f"cooldown: pausing the next {COOLDOWN_REVIEWS} reviews")
+    if state.announced_backoff:
         return None
-    if current_context < state.tokens_at_last_check:
-        # Compaction shrank the context. Growth is measured from here on, not
-        # from the pre-compaction peak the session may never climb back to.
-        state.tokens_at_last_check = current_context
-    return current_context - state.tokens_at_last_check
+    state.announced_backoff = True
+    return merge_system_message(None, cooldown_text(state.total_failures, COOLDOWN_REVIEWS))
+
+
+def _record_transcript_failure(state: SessionState) -> dict | None:
+    """An unreadable transcript counts toward the same cooldown / hard-stop
+    policy as a failed reviewer call, via the same MAX_CONSECUTIVE_FAILURES
+    threshold -- it is a failure to run the gate, not a verdict."""
+    state.consecutive_failures += 1
+    state.total_failures += 1
+    record_failure("transcript format not recognized; skipping check")
+    if not should_cooldown(state.consecutive_failures):
+        return None
+    return _back_off(state)
+
+
+def _apply_gate_backoff(state: SessionState, consecutive_failures_before: int, output: dict | None) -> dict | None:
+    """After a stop_gate call: fold its failure into total_failures and, if it
+    just crossed the cooldown threshold, replace pipeline.py's own permanent
+    disable with a cooldown (or a hard stop, once failures keep recurring).
+
+    stop_gate tracks consecutive_failures itself, resetting it to 0 on a
+    success and incrementing it on a failure; it still also sets
+    disabled_for_session permanently at MAX_CONSECUTIVE_FAILURES. That flag is
+    the signal this turn's call failed enough to act on -- it is unset again
+    here unless the session has actually hit MAX_TOTAL_FAILURES.
+    """
+    increase = state.consecutive_failures - consecutive_failures_before
+    if increase > 0:
+        state.total_failures += increase
+    if not state.disabled_for_session:
+        return output
+    state.disabled_for_session = False
+    backoff = _back_off(state)
+    if backoff is None:
+        return output
+    return merge_system_message(output, backoff["systemMessage"])
 
 
 def run(payload: dict) -> dict | None:
-    event = payload.get("hook_event_name")
-    if event not in HANDLED_EVENTS:
+    # Older installs registered more events on this script; they do nothing.
+    if payload.get("hook_event_name") != "Stop":
         return None
     if disabled_by_env():
         # A one-session kill switch has to cost nothing: no transcript read,
@@ -102,59 +123,34 @@ def run(payload: dict) -> dict | None:
         return None
 
     lines = read_transcript_lines(transcript_path)
-    if schema_health(lines) == "unrecognized":
-        # The transcript format moved under us. Every extractor would return
-        # empty and we would pay for a review of nothing.
-        state.consecutive_failures += 1
-        record_failure("transcript format not recognized; skipping check")
-        if should_disable(state.consecutive_failures):
-            state.disabled_for_session = True
-        save_state(session_id, state)
-        return None
+    unrecognized = schema_health(lines) == "unrecognized"
 
     output = None
-    delivers = event != "PreCompact" and not (event == "Stop" and payload.get("stop_hook_active"))
-    if delivers:
-        output = consume(event, session_id, state, config, len(lines))
-
-    if not state.disabled_for_session:
-        current_context = context_tokens(lines)
-        continuing = bool(output and "hookSpecificOutput" in output)
-        if (
-            event == "Stop"
-            and config.stop_gate
-            and not payload.get("stop_hook_active")
-            and not continuing
-            and risky_answer_reason(str(payload.get("last_assistant_message") or ""), lines)
-        ):
-            blocked = stop_gate(
-                session_id, state, config, lines, str(payload.get("last_assistant_message") or ""), current_context
-            )
-            if blocked:
-                earlier = (output or {}).get("systemMessage")
-                output = merge_system_message(blocked, earlier) if earlier else blocked
-        # A requested check is the user overriding the threshold; PreCompact is
-        # the highest-drift-risk moment in a session. Both still go through
-        # dispatch, so the budget and the one-worker-in-flight rule hold.
-        requested = consume_trigger()
-        if event == "PreCompact" or requested:
-            dispatch(session_id, state, config, lines, current_context)
-        if event != "PreCompact":
-            _count_new_material(state, lines)
-            if event == "UserPromptSubmit":
-                state.total_turns += 1
-                state.turns_since_check += 1
-            elif event in ("PostToolBatch", "Stop"):
-                # Both mark the end of one model call: a tool batch resolving,
-                # or the final response of the turn.
-                state.calls_since_check += 1
-            growth = _context_growth(state, current_context)
-            if not requested and should_escalate(state, config, growth):
-                dispatch(session_id, state, config, lines, current_context)
+    continuing = bool(payload.get("stop_hook_active"))
+    if not continuing:
+        # One Stop without stop_hook_active per user turn.
+        state.total_turns += 1
+        if unrecognized:
+            # The transcript format moved under us. Every extractor would
+            # return empty and we would pay for a review of nothing -- this is
+            # a review opportunity like any other for cooldown purposes.
+            if state.cooldown_remaining_reviews > 0:
+                state.cooldown_remaining_reviews -= 1
+            else:
+                output = _record_transcript_failure(state)
+        else:
+            last_message = str(payload.get("last_assistant_message") or "")
+            if risky_answer_reason(last_message, lines):
+                if state.cooldown_remaining_reviews > 0:
+                    state.cooldown_remaining_reviews -= 1
+                else:
+                    before = state.consecutive_failures
+                    output = stop_gate(session_id, state, config, lines, last_message, context_tokens(lines))
+                    output = _apply_gate_backoff(state, before, output)
 
     if not state.announced_activation:
         state.announced_activation = True
-        output = merge_system_message(output, activation_text(config.first_check_call_threshold))
+        output = merge_system_message(output, activation_text())
 
     save_state(session_id, state)
     return output

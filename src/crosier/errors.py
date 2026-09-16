@@ -7,6 +7,17 @@ from datetime import datetime, timezone
 from crosier.paths import errors_log_path
 
 MAX_CONSECUTIVE_FAILURES = 2
+# A cooldown skips this many review opportunities (Stops where a review would
+# otherwise have run) rather than disabling the gate for the rest of the
+# session outright: two failures in a row are often a transient timeout (a
+# slow reviewer call against the Stop hook's deadline), not a broken install.
+# Counted in review opportunities, not turns, so a session where most Stops
+# are not risky enough to review does not quietly serve out its whole
+# cooldown on turns that were never going to be gated anyway.
+COOLDOWN_REVIEWS = 5
+# Hard stop only after failures keep recurring across cooldowns: three
+# cooldown-triggering cycles (2 failures each) in one session.
+MAX_TOTAL_FAILURES = 6
 
 
 def record_failure(message: str) -> None:
@@ -21,4 +32,15 @@ def record_failure(message: str) -> None:
 
 
 def should_disable(consecutive_failures: int) -> bool:
+    # Kept for callers still on the old permanent-disable behaviour. New
+    # callers should read this as "start a cooldown" (should_cooldown) and
+    # additionally check should_hard_stop before disabling permanently.
     return consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+
+
+def should_cooldown(consecutive_failures: int) -> bool:
+    return consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+
+
+def should_hard_stop(total_failures: int) -> bool:
+    return total_failures >= MAX_TOTAL_FAILURES

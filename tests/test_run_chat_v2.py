@@ -20,25 +20,15 @@ JUNIT = """<?xml version="1.0" encoding="utf-8"?>
 </testsuite></testsuites>"""
 
 
-def test_crosier_arms_share_the_budget_and_differ_only_in_the_gate(tmp_path):
-    configs = {}
-    for arm in ("async", "gate"):
-        workdir = tmp_path / arm
-        workdir.mkdir()
-        (workdir / ".crosier.toml").write_text(arm_toml(arm), encoding="utf-8")
-        configs[arm] = load_config(workdir)
-    assert configs["gate"].stop_gate is True
-    assert configs["async"].stop_gate is False
-    assert configs["gate"].max_checks_per_session == configs["async"].max_checks_per_session > 12
-
-
-def test_the_off_arm_still_writes_a_config_so_the_workdirs_match():
-    assert tomllib.loads(arm_toml("off"))["crosier"]["stop_gate"] is False
+def test_both_arms_write_the_same_config_with_a_raised_budget():
+    assert arm_toml("off") == arm_toml("on")
+    assert tomllib.loads(arm_toml("on"))["crosier"]["max_checks_per_session"] > 12
 
 
 def test_reviewer_model_is_written_when_given(tmp_path):
-    (tmp_path / ".crosier.toml").write_text(arm_toml("gate", reviewer_model="haiku"), encoding="utf-8")
+    (tmp_path / ".crosier.toml").write_text(arm_toml("on", reviewer_model="haiku", reviewer_effort="low"), encoding="utf-8")
     assert load_config(tmp_path).verdict_model == "haiku"
+    assert load_config(tmp_path).verdict_effort == "low"
 
 
 def test_junit_counts_only_a_clean_testcase_as_passed():
@@ -89,3 +79,27 @@ def test_reviewer_cost_is_charged_to_the_turn_that_dispatched_the_check_stale_in
     assert by_turn[4]["checks"] == 2
     assert by_turn[4]["gate_checks"] == 1
     assert by_turn[4]["input_tokens"] == 50
+
+
+def test_session_workdirs_live_outside_the_plugin_root():
+    # Claude Code denies edits inside a --plugin-dir as a "sensitive file"; a
+    # 24-turn run with workdirs under benchmark/ made zero edits on both arms.
+    from run_chat import ROOT
+    from run_chat_v2 import SESSIONS_ROOT
+
+    assert ROOT.resolve() not in SESSIONS_ROOT.resolve().parents
+
+
+def test_remove_tree_clears_read_only_files(tmp_path):
+    import os
+    import stat
+
+    from run_chat_v2 import _remove_tree
+
+    target = tmp_path / "session" / ".git" / "objects"
+    target.mkdir(parents=True)
+    locked = target / "pack"
+    locked.write_text("x", encoding="utf-8")
+    os.chmod(locked, stat.S_IREAD)
+    _remove_tree(tmp_path / "session")
+    assert not (tmp_path / "session").exists()

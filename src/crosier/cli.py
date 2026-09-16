@@ -2,9 +2,8 @@
 
 Deliberately small. Crosier's job is to be invisible until it has something to
 say, and the cost of that is a user who cannot tell it apart from a plugin that
-failed to load. These three subcommands answer "is it on?", "what did it do?"
-and "check now"; `CROSIER_DISABLED=1` answers "leave me alone". That is all of
-it — this is a diagnostics surface, not a framework.
+failed to load. These two subcommands answer "is it on?" and "what did it do?";
+`CROSIER_DISABLED=1` answers "leave me alone". That is all of it — this is a diagnostics surface, not a framework.
 
 Everything here reads Crosier's own files under `CROSIER_HOME`. Nothing reads
 the transcript, the project, or the repository — the isolation the reviewer
@@ -19,7 +18,6 @@ from crosier.config import DISABLE_ENV, disabled_by_env, load_config
 from crosier.journal import read_journal
 from crosier.paths import crosier_home, errors_log_path
 from crosier.state import load_state
-from crosier.trigger import request_check
 
 __all__ = ["main"]
 
@@ -75,11 +73,6 @@ def cmd_status(_args) -> int:
     print(f"checks:    {state.checks_run}/{config.max_checks_per_session} used")
     if state.disabled_for_session:
         print("           backed off for this session after repeated errors")
-    if state.checks_run == 0:
-        remaining = max(0, config.first_check_call_threshold - state.calls_since_check)
-    else:
-        remaining = max(0, config.call_threshold - state.calls_since_check)
-    print(f"next:      about {remaining} more model calls")
     entries = read_journal(session)
     print(f"last:      {_describe(entries[-1]) if entries else 'nothing yet'}")
     return 0
@@ -138,22 +131,13 @@ def _print_spend(entries: list) -> None:
     )
 
 
-def cmd_check(_args) -> int:
-    if not request_check():
-        print("Could not write the trigger file under " + str(crosier_home()), file=sys.stderr)
-        return 1
-    print("Direction check requested - it runs on the session's next hook event.")
-    return 0
-
-
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(prog="crosier", description=__doc__.splitlines()[0])
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("status", help="is it on, how much budget is left, what did it last say")
     subparsers.add_parser("report", help="what this session was checked for and what was flagged")
-    subparsers.add_parser("check", help="request a direction check now instead of at a threshold")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
-    handlers = {"status": cmd_status, "report": cmd_report, "check": cmd_check}
+    handlers = {"status": cmd_status, "report": cmd_report}
     handler = handlers.get(args.command)
     if handler is None:
         parser.print_help()

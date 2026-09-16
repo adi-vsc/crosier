@@ -21,21 +21,12 @@ def test_save_then_load_roundtrips():
     state = SessionState(
         last_line_index=12,
         total_turns=5,
-        calls_since_check=7,
-        turns_since_check=5,
-        chars_since_check=4000,
-        recent_tool_calls=["Read:111", "Edit:222"],
         consecutive_failures=1,
         last_flag="the endpoint is idempotent",
         disabled_for_session=False,
     )
     save_state("session-abc", state)
     assert load_state("session-abc") == state
-
-
-def test_tokens_at_last_check_roundtrips():
-    save_state("session-tok", SessionState(tokens_at_last_check=54_000))
-    assert load_state("session-tok").tokens_at_last_check == 54_000
 
 
 def test_unknown_fields_from_an_older_version_are_ignored():

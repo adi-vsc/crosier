@@ -21,3 +21,6 @@ LOGBOOK.md
 .claude-flow/
 .swarm/
 benchmark/sweeps/
+benchmark/corpus/out/
+.claude/
+scratch_signals.json

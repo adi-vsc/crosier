@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Crosier is now a Stop gate and nothing else. The asynchronous checks judged a
+turn's final answer only after the user had read it, which is the failure
+Crosier exists to replace.
+
+### Changed
+
+- The hook listens on `Stop` only. A final answer that claims an outcome, or
+  follows a turn that edited files, is reviewed synchronously and a flag
+  returns `decision: block`; the agent revises before the turn ends, at most
+  once per turn. Fails open on any error or timeout.
+- The gate is on whenever Crosier is enabled. There is no `stop_gate` key.
+- The Stop hook timeout is 90s (plugin manifest and `scripts.install`); the
+  reviewer call inside it is capped at 60s.
+
+### Removed
+
+- Background checks: the detached worker, the pending result file, delivery
+  through `additionalContext` at `PostToolBatch`, `UserPromptSubmit` and
+  `Stop`, and the forced check at `PreCompact`.
+- The threshold trigger (calls, turns, context growth, tool repetition, bulk
+  sweep detection) and its config keys: `call_threshold`,
+  `first_check_call_threshold`, `turn_threshold`, `token_threshold`,
+  `repetition_threshold`, `min_calls_between_checks`, `staleness_line_limit`,
+  `worker_deadline`, `announce`, `stop_gate`. Old keys in `.crosier.toml` are
+  ignored.
+- `crosier check` and `/crosier:check`.
+- Events other than `Stop` registered by an older install are now a no-op.
+
 ## 0.2.0 — 2026-09-06
 
 Audit-driven redesign. Replaying 26 real Claude Code transcripts through the

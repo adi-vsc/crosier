@@ -1,30 +1,8 @@
 {
   "name": "crosier",
   "version": "0.2.0",
-  "description": "Install-and-forget direction checks for long Claude Code sessions. A fresh, zero-context Claude instance periodically reviews a structured excerpt of your session and flags drift inside the turn, before the answer is done.",
+  "description": "Install-and-forget second opinion for long Claude Code sessions. When a final answer claims an outcome or follows file edits, a fresh, zero-context Claude instance reviews it at Stop and holds the turn if it finds a problem, before the answer stands.",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolBatch": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -32,17 +10,6 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
             "timeout": 90
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/crosier_hook.py\"",
-            "timeout": 10
           }
         ]
       }

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.install import HOOK_EVENTS, HOOK_TIMEOUT_SECONDS, _resolve_python, merge_hooks_into_settings
+from scripts.install import HOOK_EVENTS, _resolve_python, merge_hooks_into_settings
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,7 @@ def test_merge_registers_every_event_on_the_single_entrypoint(tmp_path: Path):
     settings_path.write_text("{}", encoding="utf-8")
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert set(HOOK_EVENTS) == {"UserPromptSubmit", "PostToolBatch", "Stop", "PreCompact"}
+    assert set(HOOK_EVENTS) == {"Stop"}
     for event in HOOK_EVENTS:
         command = data["hooks"][event][0]["hooks"][0]["command"]
         assert "crosier_hook.py" in command
@@ -36,7 +36,7 @@ def test_merge_preserves_existing_unrelated_hooks(tmp_path: Path):
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
     assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "echo hi"
-    assert "UserPromptSubmit" in data["hooks"]
+    assert "Stop" in data["hooks"]
 
 
 def test_merge_is_idempotent(tmp_path: Path):
@@ -45,21 +45,7 @@ def test_merge_is_idempotent(tmp_path: Path):
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
     data = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert len(data["hooks"]["UserPromptSubmit"]) == 1
-
-
-def test_merge_writes_a_short_timeout_on_hook_entries(tmp_path: Path):
-    # The hook dispatches to a background worker and returns; a long timeout
-    # here would only ever be time the user spends waiting on a broken install.
-    settings_path = tmp_path / "settings.json"
-    settings_path.write_text("{}", encoding="utf-8")
-    merge_hooks_into_settings(settings_path, plugin_root=Path("/plugins/crosier"))
-    data = json.loads(settings_path.read_text(encoding="utf-8"))
-    for event in HOOK_EVENTS:
-        if event == "Stop":
-            continue
-        assert data["hooks"][event][0]["hooks"][0]["timeout"] == HOOK_TIMEOUT_SECONDS
-    assert HOOK_TIMEOUT_SECONDS <= 15
+    assert len(data["hooks"]["Stop"]) == 1
 
 
 def test_stop_timeout_outlasts_the_gate_call_in_both_install_paths(tmp_path: Path):

@@ -6,7 +6,7 @@ nothing needs the project to scope them."""
 
 from pathlib import Path
 
-from crosier.paths import crosier_home, errors_log_path, result_path, state_path, worker_marker_path
+from crosier.paths import crosier_home, errors_log_path, state_path
 
 
 def test_home_defaults_under_the_users_claude_directory(monkeypatch):
@@ -22,8 +22,6 @@ def test_home_honours_the_env_override(monkeypatch, tmp_path):
 def test_paths_are_keyed_on_a_sanitized_session_id(monkeypatch, tmp_path):
     monkeypatch.setenv("CROSIER_HOME", str(tmp_path))
     assert state_path("../../escape") == tmp_path / "state" / "escape.json"
-    assert result_path("s 1") == tmp_path / "results" / "s1.json"
-    assert worker_marker_path("s-1") == tmp_path / "workers" / "s-1.pid"
     assert errors_log_path() == tmp_path / "errors.log"
 
 

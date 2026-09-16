@@ -1,9 +1,7 @@
 """The local half of the Stop gate: which final answers are worth holding a turn
 for, and what the synchronous review of one reads.
 
-Every other check in Crosier is asynchronous, so the last answer of a turn is
-only ever judged after the user has read it. The gate reviews it before the
-turn ends. That costs the user seconds of a frozen prompt, so an answer only
+The gate reviews the last answer of a turn before the turn ends. That costs the user seconds of a frozen prompt, so an answer only
 gets a review when it is the kind a user acts on: it claims the work is done or
 verified, or the turn changed files. Everything else passes at zero cost.
 """

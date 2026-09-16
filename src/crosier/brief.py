@@ -20,11 +20,15 @@ mention:
    matter even when nothing refers to them;
 3. calls the final answer actually references — paths, basenames, backtick
    identifiers (with snake/kebab/camel variants), test names, counts like
-   "26/26".
+   "26/26", and bare prose words that are exactly a file stem in a call's
+   input ("the gate module" for `src/crosier/gate.py`).
 
 Paraphrases ("the auth test" for `test_auth_flow`) are not chased: the surface
 match either finds a locator or it doesn't, and `brief_stats` reports the
-counts so that gap stays visible rather than silently assumed away.
+counts so that gap stays visible rather than silently assumed away. The prose
+word path stays surface too — equality against an extracted stem set, never a
+substring scan of the whole call, which in a JSON haystack of tool names and
+argument keys would match nearly everything.
 
 Record header style and body escaping are digest.py's: a body that opens a
 line with `[label]` cannot forge a second record, because `_render` runs the
@@ -76,6 +80,16 @@ _TEST_LIKE_RE = re.compile(
 # own. Neutralized here, then `_render` still runs its own pass underneath.
 _BRIEF_FORGED_RE = re.compile(r"^\[(final answer|evidence|unreferenced)\]", re.MULTILINE)
 
+# Prose words in the final answer that are exactly a file stem in a call's
+# input. Three characters minimum, and a short stoplist of English filler that
+# is also a plausible stem, so "the" does not pull in `the.py`.
+_WORD_RE = re.compile(r"[a-z][a-z0-9_-]{2,}")
+_WORD_STOPLIST = frozenset(
+    "the and for not all any new now out its our you use add fix set get one two but with "
+    "that this than then them they from into over only some such were was are has had have "
+    "been also does did done ran run".split()
+)
+
 _TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\)|\bException\b")
 _EXIT_CODE_RE = re.compile(r"\b(?:exit code|Exit status)\D{0,3}([1-9]\d*)", re.IGNORECASE)
 _FAILED_COUNT_RE = re.compile(r"\b([1-9]\d*)\s+(?:failed|errors?)\b", re.IGNORECASE)
@@ -91,6 +105,14 @@ def _cut(text: str, head: int, tail: int) -> str:
     if len(text) <= head + tail:
         return text
     return text[:head].rstrip() + "\n…\n" + text[-tail:].lstrip()
+
+
+def _brief_render(label: str, text: str) -> str:
+    """digest._render neutralizes digest's own label vocabulary. Brief adds
+    three labels digest has never heard of, so a body that opens a line with
+    one of them is neutralized here first — same substitution, brackets to
+    parentheses, so the text still reaches the reviewer as evidence."""
+    return _render(label, _BRIEF_FORGED_RE.sub(r"(\1)", text or ""))
 
 
 def _case_variants(identifier: str) -> set:
@@ -183,7 +205,38 @@ def _call_haystack(call: dict) -> str:
     return f"{call.get('name', '')} {input_text} {result_text}".lower()
 
 
-def _matches(call: dict, refs: list) -> bool:
+def _answer_words(text: str) -> set:
+    """Lowercase prose words of the final answer, long enough and common
+    enough to be a file stem rather than filler."""
+    if not text:
+        return set()
+    return {w for w in _WORD_RE.findall(text.lower()) if w not in _WORD_STOPLIST}
+
+
+def _call_stems(call: dict) -> set:
+    """Extension-stripped basenames of the paths in a call's input, plus the
+    basename of a Bash command's executable. A small, exact set — the prose
+    word path is matched against this, never against the whole call."""
+    tool_input = call.get("input")
+    try:
+        input_text = json.dumps(tool_input, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        input_text = str(tool_input)
+    tokens = set(_PATH_RE.findall(input_text))
+    if isinstance(tool_input, dict):
+        command = str(tool_input.get("command", "")).strip()
+        if command:
+            tokens.add(command.split()[0])
+    stems = set()
+    for token in tokens:
+        base = re.split(r"[\\/]", token)[-1]
+        stems.add(base.rsplit(".", 1)[0].lower() if "." in base else base.lower())
+    return {s for s in stems if s}
+
+
+def _matches(call: dict, refs: list, words: set = frozenset()) -> bool:
+    if words and words & _call_stems(call):
+        return True
     if not refs:
         return False
     haystack = _call_haystack(call)
@@ -233,45 +286,68 @@ def _last_test_like(calls: list):
     return None
 
 
-def _render_call(call: dict, source: str) -> list:
-    records = [_render(f"tool_use {call['name']}", _compact_args(call["input"]))]
+def _render_call(call: dict) -> list:
+    """Cut sizes follow what the result *is*, not why it was selected: a
+    failing result keeps a smaller head and the same tail wherever it came
+    from, because its payload is at the end."""
+    records = [_brief_render(f"tool_use {call['name']}", _compact_args(call["input"]))]
     if call["result"] is not None:
         label = "tool_result ERROR" if call["is_error"] else "tool_result"
         head, tail = (
             (FAILURE_RESULT_HEAD, FAILURE_RESULT_TAIL)
-            if source == "failure"
+            if _signals_failure(call)
             else (EVIDENCE_RESULT_HEAD, EVIDENCE_RESULT_TAIL)
         )
-        records.append(_render(label, _cut(call["result"], head, tail)))
+        records.append(_brief_render(label, _cut(call["result"], head, tail)))
     return records
 
 
-def _prioritized_candidates(calls: list, refs: list) -> list:
-    """(call, source) pairs in selection priority: failure signals first
-    (newest 6), then the last test-like run, then referenced calls
-    (newest first) — each call appears once, tagged by the highest-priority
-    reason it was pulled in."""
+def _prioritized_candidates(calls: list, refs: list, words: set = frozenset()) -> list:
+    """(call, source) pairs in selection priority: the last test-like run
+    first, then failure signals (newest 6), then referenced calls (newest
+    first) — each call appears once, tagged by the highest-priority reason it
+    was pulled in.
+
+    The last test run outranks the failure net because it is the window's
+    verification outcome: under a tight cap it is the one result a reviewer
+    cannot do without. A call can belong to more than one path — the last
+    test run is usually also the failing one — so the id sets are returned
+    alongside, and `brief_stats` counts membership rather than this ordering.
+
+    Returns (candidates, sources) where sources maps each path name to the
+    set of call ids that path selected."""
     seen = set()
     candidates = []
 
+    last_test = _last_test_like(calls)
+    last_test_ids = {last_test["id"]} if last_test is not None else set()
+    if last_test is not None:
+        candidates.append((last_test, "last_test"))
+        seen.add(last_test["id"])
+
     failure_calls = sorted((c for c in calls if _signals_failure(c)), key=lambda c: -c["number"])
+    failure_ids = {c["id"] for c in failure_calls[:FAILURE_SIGNAL_CAP]}
     for call in failure_calls[:FAILURE_SIGNAL_CAP]:
         if call["id"] not in seen:
             candidates.append((call, "failure"))
             seen.add(call["id"])
 
-    last_test = _last_test_like(calls)
-    if last_test is not None and last_test["id"] not in seen:
-        candidates.append((last_test, "last_test"))
-        seen.add(last_test["id"])
-
-    referenced = [c for c in calls if _matches(c, refs)]
+    referenced = [c for c in calls if _matches(c, refs, words)]
+    referenced_ids = {c["id"] for c in referenced}
     for call in sorted(referenced, key=lambda c: -c["number"]):
         if call["id"] not in seen:
             candidates.append((call, "referenced"))
             seen.add(call["id"])
 
-    return candidates
+    sources = {
+        "last_test": last_test_ids,
+        "failure": failure_ids,
+        # A referenced call that the safety net already forced in is not a
+        # reference hit worth counting: `evidence_from_referenced` exists to
+        # show what the answer's own words bought.
+        "referenced": referenced_ids - failure_ids - last_test_ids,
+    }
+    return candidates, sources
 
 
 def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> dict:
@@ -289,16 +365,16 @@ def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> d
         window = []
     calls = _tool_calls(window)
     refs = _reference_strings(answer_raw)
-    candidates = _prioritized_candidates(calls, refs)
+    candidates, sources = _prioritized_candidates(calls, refs, _answer_words(answer_raw))
 
     records = []
-    goal_section = _render("goal", _cap(goal_raw, GOAL_CHAR_CAP)) if goal_raw else None
+    goal_section = _brief_render("goal", _cap(goal_raw, GOAL_CHAR_CAP)) if goal_raw else None
     if goal_section:
         records.append(goal_section)
-    latest_section = _render("latest user instruction", _cap(latest_raw, INSTRUCTION_CHAR_CAP)) if latest_raw else None
+    latest_section = _brief_render("latest user instruction", _cap(latest_raw, INSTRUCTION_CHAR_CAP)) if latest_raw else None
     if latest_section:
         records.append(latest_section)
-    answer_section = _render("final answer", answer_text)
+    answer_section = _brief_render("final answer", answer_text)
     records.append(answer_section)
 
     fixed_used = sum(len(r) + 2 for r in records)
@@ -307,7 +383,7 @@ def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> d
     kept = []  # (call, source, rendered_records)
     used = 0
     for call, source in candidates:
-        rendered = _render_call(call, source)
+        rendered = _render_call(call)
         size = sum(len(r) + 2 for r in rendered)
         if kept and used + size > evidence_budget:
             break
@@ -316,11 +392,11 @@ def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> d
     kept.sort(key=lambda item: item[0]["number"])
 
     shown_ids = {call["id"] for call, _, _ in kept}
-    from_failure = sum(1 for _, source, _ in kept if source == "failure")
-    from_last_test = sum(1 for _, source, _ in kept if source == "last_test")
-    from_referenced = sum(1 for _, source, _ in kept if source == "referenced")
+    from_failure = len(shown_ids & sources["failure"])
+    from_last_test = len(shown_ids & sources["last_test"])
+    from_referenced = len(shown_ids & sources["referenced"])
 
-    evidence_header = _render("evidence", f"{len(kept)} of {len(calls)} tool calls")
+    evidence_header = _brief_render("evidence", f"{len(kept)} of {len(calls)} tool calls")
     records.append(evidence_header)
     evidence_call_records = []
     for _, _, rendered in kept:
@@ -334,7 +410,7 @@ def _build(lines: list, since_index: int, last_message: str, char_cap: int) -> d
         unref_text = "omitted: " + ", ".join(parts)
     else:
         unref_text = "omitted: none"
-    unref_section = _render("unreferenced", unref_text)
+    unref_section = _brief_render("unreferenced", unref_text)
     records.append(unref_section)
 
     text = "\n\n".join(records)

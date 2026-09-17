@@ -168,6 +168,20 @@ def test_enumerate_stop_points_skips_and_includes_eof():
     assert real_points[1]["next_prompt_line"] is None
 
 
+def test_interrupt_before_any_assistant_text_is_skipped_as_interrupted():
+    entries = [
+        user_prompt("do thing 1"),
+        tool_use("Bash", "t1"),
+        interrupt(),
+        # A later user text block (a skill or meta injection) must not hide the interrupt.
+        {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "skill context"}]}},
+        user_prompt("do thing 2"),
+        assistant_text("done with thing 2"),
+    ]
+    points = rg.enumerate_stop_points(entries, list(range(1, len(entries) + 1)))
+    assert [p["skip_reason"] for p in points] == ["before_first_prompt", "interrupted", None]
+
+
 def test_until_cutoff_stops_reading_transcript(tmp_path):
     entries = [
         user_prompt("first", ts="2026-09-01T00:00:00Z"),
@@ -318,6 +332,28 @@ def test_dry_run_never_calls_the_real_function(tmp_path, monkeypatch):
     assert list(cache_path.glob("*.json")) == []  # never cached
 
 
+def test_cache_hits_do_not_count_toward_spend_or_the_cost_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(rg, "_real_run_claude", lambda **kw: dict(PROCEED_ENVELOPE))
+    kwargs = dict(system_prompt="sp", stdin_text="the excerpt", model="sonnet", timeout=10, json_schema=None, effort="low")
+    rg.CallRecorder(cache_dir=tmp_path / "cache", excerpts_dir=tmp_path / "ex", dry_run=False, max_cost=None)(**kwargs)
+
+    # A warm cache and a cap below one call's cost: replaying must neither
+    # spend nor stop the run.
+    recorder = _recorder(tmp_path, max_cost=PROCEED_ENVELOPE["cost_usd"] / 2)
+    for _ in range(3):
+        recorder(**kwargs)
+    assert recorder.spent_usd == 0.0
+    assert not recorder.stop_requested.is_set()
+
+
+def test_real_spend_past_the_cap_requests_a_stop(tmp_path, monkeypatch):
+    monkeypatch.setattr(rg, "_real_run_claude", lambda **kw: dict(PROCEED_ENVELOPE))
+    recorder = _recorder(tmp_path, max_cost=PROCEED_ENVELOPE["cost_usd"])
+    recorder(system_prompt="sp", stdin_text="the excerpt", model="sonnet", timeout=10, json_schema=None, effort="low")
+    assert recorder.spent_usd == PROCEED_ENVELOPE["cost_usd"]
+    assert recorder.stop_requested.is_set()
+
+
 # --- resumability ----------------------------------------------------------------------
 
 
@@ -351,6 +387,7 @@ def test_resume_skips_a_session_already_completed(tmp_path, monkeypatch):
     first = rg.run_arm(_args(tmp_path))
     assert first["sessions_processed"] == 1
     assert first["sessions_skipped_resume"] == 0
+    assert first["spent_usd"] == 0.0  # dry run spends nothing
     rows_path = tmp_path / "out" / "six" / "rows.jsonl"
     first_row_count = sum(1 for _ in rows_path.open(encoding="utf-8"))
 
@@ -359,6 +396,23 @@ def test_resume_skips_a_session_already_completed(tmp_path, monkeypatch):
     assert second["sessions_skipped_resume"] == 1
     second_row_count = sum(1 for _ in rows_path.open(encoding="utf-8"))
     assert second_row_count == first_row_count
+
+
+def test_redoing_an_aborted_session_starts_from_fresh_hook_state(tmp_path, monkeypatch):
+    _write_corpus(tmp_path, "sessA", edit_cycle(1) + edit_cycle(2))
+    rg.run_arm(_args(tmp_path))
+    first_rows = (tmp_path / "out" / "six" / "rows.jsonl").read_text(encoding="utf-8")
+
+    # Simulate an abort mid-session: the session never reached completed.txt,
+    # but its hook state and journal stayed behind under CROSIER_HOME.
+    (tmp_path / "out" / "six" / "completed.txt").unlink()
+    second = rg.run_arm(_args(tmp_path))
+
+    assert second["sessions_processed"] == 1
+    monkeypatch.setenv("CROSIER_HOME", str(tmp_path / "out" / "six" / "home"))
+    journal = rg.read_journal("six-sessA")
+    assert [e["turn"] for e in journal] == [1, 2]
+    assert (tmp_path / "out" / "six" / "rows.jsonl").read_text(encoding="utf-8") == first_rows
 
 
 def test_resolve_sessions_reports_resolved_and_unresolved(tmp_path):

@@ -25,3 +25,16 @@ benchmark/corpus/out/
 benchmark/replay/out*/
 .claude/
 scratch_signals.json
+
+# Benchmarks, corpora and real-session excerpts stay local, with the tests that import them.
+benchmark/
+tests/test_base_rate.py
+tests/test_chat_scenarios_v2.py
+tests/test_chat_scoring.py
+tests/test_haystack.py
+tests/test_mine_sessions.py
+tests/test_replay_gate.py
+tests/test_run_chat_v2.py
+tests/test_run_persistence.py
+tests/test_snapshot_hook.py
+tests/test_triggers.py

@@ -1,6 +1,6 @@
 # Crosier
 
-Install-and-forget direction checks for long Claude Code sessions.
+Zero-context second opinions for long Claude Code sessions.
 
 LLM agent sessions measurably degrade as they get longer — this isn't
 folklore:
@@ -13,11 +13,20 @@ folklore:
 | A parallel LLM monitor "reduced repetition on loop-prone tasks by 52-62% with approximately 11% overhead" — a feasibility study, and its authors note the benefit is task-type dependent | [Khan & Khan, arXiv:2604.13759](https://arxiv.org/abs/2604.13759) |
 | "Self-correction works well in tasks that can use reliable external feedback" — which is why the reviewer is told to decide a verification claim on the tool result, not on the prose | [Kamoi et al., arXiv:2406.01297](https://arxiv.org/abs/2406.01297) |
 
-When the agent is about to end a turn with an answer worth acting on, Crosier
-hands a structured excerpt of the session to a fresh, zero-context Claude
-instance for a second opinion. If the reviewer flags a problem, the turn is
-held and the agent looks again **before the answer stands**, so a correction
-is preventive rather than a post-mortem.
+Crosier gets the agent a second opinion from a reviewer that has never seen
+the session. It has two parts:
+
+- **`/crosier:attack`** — on demand. The agent writes a short brief of its
+  latest decision with locators, a zero-context Sonnet subagent attacks it,
+  and the agent verifies each kill against its locator before accepting it.
+  Works as soon as the plugin is installed.
+- **The Stop gate — experimental, off by default.** When enabled, a final
+  answer that claims an outcome or follows file edits is handed as a
+  structured excerpt to a fresh, zero-context Claude instance, and a flag
+  holds the turn so the agent looks again before the turn ends. It is parked
+  because its trigger has not yet beaten a random trigger on real sessions
+  and the precision of its flags is still being measured. Opt in with
+  `enabled = true` in `.crosier.toml`.
 
 ## Install
 
@@ -58,9 +67,11 @@ defaults while silently ignoring your `.crosier.toml`, so the hook declines the
 event instead; the install command tries `python3`, then `python`, then `py -3`,
 and takes the first one new enough.
 
-No configuration is required — defaults are safe and on by default. At the end
-of the first turn of a session Crosier prints one line to your screen saying it
-is running, and then says nothing until it has something to say.
+No configuration is required: `/crosier:attack` works out of the box, and the
+Stop gate stays silent and inert until you set `enabled = true` in
+`.crosier.toml`. Once it is on, at the end of the first turn of a session
+Crosier prints one line to your screen saying it is running, and then says
+nothing until it has something to say.
 
 ## Checking on it, and turning it off
 
@@ -79,10 +90,10 @@ CROSIER_DISABLED=1 claude
 ```
 
 The hook checks it before doing any work: no transcript read, no state written,
-no output. To switch it off for a project instead, set `enabled = false` in
-`.crosier.toml`.
+no output. To switch the gate off for a project you enabled it in, set
+`enabled = false` in `.crosier.toml` (the default).
 
-## How it works
+## How the Stop gate works
 
 1. A single hook script listens on one event, `Stop`. It decides locally, in
    pure Python with no network call, whether the final answer is worth a
@@ -163,7 +174,7 @@ Crosier's own files live under `~/.claude/crosier/` (override with
 
 ```toml
 [crosier]
-enabled = true
+enabled = false                 # the Stop gate; off by default, true to opt in
 verdict_model = "sonnet"
 verdict_effort = "low"          # "low".."max", or "none" for the CLI default
 max_checks_per_session = 12     # hard budget per session

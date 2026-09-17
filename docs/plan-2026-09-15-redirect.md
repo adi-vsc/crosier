@@ -135,3 +135,33 @@ Wave 3: W8.
 7. W6 is additive and changes no default; its own criterion is the corpus's
    `agent_attack_call` events: share of attacks whose kill list changed the next
    answer.
+
+## 2026-09-17 — Null exit applied; bar for un-parking the gate
+
+The powered trigger run (2026-09-16: gate trigger 55 fires, fire rate 0.451,
+12 hits against a random mean of 9.97, p = 0.249) did not beat random, so the
+null exit above is applied: `enabled` now defaults to `false`, the README leads
+with `/crosier:attack`, and the Stop gate is opt-in and labelled experimental.
+
+The replay of the real hook over the frozen real-session corpus
+(`benchmark/replay/replay_gate.py`) decides whether the gate comes back on by
+default. The bar is fixed here, before the run:
+
+- **Precision** = delivered flags that the blind hindsight labeller marks bad
+  **and** that the flag matcher says name that same problem, divided by all
+  delivered flags.
+- The gate goes back to default-on only if precision >= 0.5 over at least 20
+  delivered flags. Fewer than 20 delivered flags decides nothing, and the gate
+  stays parked.
+- Arm `two` (rubric cut to `unverified_claim` + `ignored_correction`) replaces
+  the full rubric if its precision is higher and its count of matched flags is
+  not lower.
+- Neither the labeller nor the flag matcher may run on the same model as the
+  scored reviewer (`verdict_model`, default `sonnet`). Both run on Opus.
+- Latency: report p50 and p95 wall-clock per review from the same run
+  alongside precision.
+
+Known and not fixed by this change: a reviewer's `suggested_check` is printed
+into the block reason without being checked against the excerpt. The block
+reason now calls it a hint from a reviewer that read untrusted content rather
+than an instruction to run it, which changes its tone, not the path.

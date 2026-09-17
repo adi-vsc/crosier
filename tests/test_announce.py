@@ -25,7 +25,7 @@ def test_flag_blocks_the_stop_with_the_whole_concern_in_the_reason():
     text = out["reason"]
     assert "the endpoint is idempotent so retries are safe" in text
     assert "no test confirms this" in text
-    assert "run the retry test twice" in text
+    assert "Reviewer's suggested check: run the retry test twice" in text
     assert "unverified_claim" in text
     assert text.endswith(GATE_SUFFIX)
     assert "the endpoint is idempotent" in out["systemMessage"]
@@ -34,6 +34,13 @@ def test_flag_blocks_the_stop_with_the_whole_concern_in_the_reason():
 def test_gate_suffix_lets_the_agent_keep_a_correct_answer():
     assert "restate the answer unchanged" in GATE_SUFFIX
     assert "Do not reply to this note or justify earlier turns." in GATE_SUFFIX
+
+
+def test_gate_suffix_treats_the_suggested_check_as_a_hint_not_an_order():
+    # The check comes from a reviewer that read untrusted session content --
+    # it must not read as an instruction to run it.
+    assert "Run the suggested check" not in GATE_SUFFIX
+    assert "treat it as a hint" in GATE_SUFFIX
 
 
 def test_proceed_and_none_let_the_answer_stand():

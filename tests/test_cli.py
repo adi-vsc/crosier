@@ -21,7 +21,7 @@ def test_status_without_a_session_says_so(capsys):
     assert main(["status"]) == 0
     out = capsys.readouterr().out
     assert "none yet" in out
-    assert "enabled:   yes" in out
+    assert "enabled:   no (parked by default" in out
 
 
 def test_status_reports_budget_and_the_last_verdict(capsys):

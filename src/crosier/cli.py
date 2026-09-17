@@ -61,7 +61,7 @@ def cmd_status(_args) -> int:
     if disabled_by_env():
         print(f"enabled:   no ({DISABLE_ENV} is set for this shell)")
     else:
-        print(f"enabled:   {'yes' if config.enabled else 'no (.crosier.toml)'}")
+        print(f"enabled:   {'yes' if config.enabled else 'no (parked by default; set enabled = true in .crosier.toml)'}")
     print(f"model:     {config.verdict_model}")
     if session is None:
         print("session:   none yet - no check has run on this machine")

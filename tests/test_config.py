@@ -11,7 +11,7 @@ def test_defaults_when_no_config_file(tmp_path: Path):
 
 def test_default_values(tmp_path: Path):
     config = load_config(tmp_path)
-    assert config.enabled is True
+    assert config.enabled is False
     assert config.verdict_model == "sonnet"
     assert config.max_checks_per_session == 12
     assert config.min_flag_confidence == "medium"
@@ -27,7 +27,7 @@ def test_overrides_from_toml_file(tmp_path: Path):
     config = load_config(tmp_path)
     assert config.verdict_model == "haiku"
     assert config.max_checks_per_session == 5
-    assert config.enabled is True  # untouched fields keep their default
+    assert config.enabled is False  # untouched fields keep their default
 
 
 def test_malformed_toml_falls_back_to_defaults(tmp_path: Path):

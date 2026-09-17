@@ -134,9 +134,11 @@ class _Reviewer:
 
 
 def _gated_turn(tmp_path, **config):
+    # The gate is off by default; every gated test needs an explicit
+    # `enabled = true` unless it is deliberately testing the disabled path.
+    config.setdefault("enabled", True)
     s = Session(tmp_path)
-    if config:
-        _config(s, **config)
+    _config(s, **config)
     s.prompt("fix the parser")
     s.batch(name="Edit", target="parser.py")
     return s
@@ -212,6 +214,7 @@ def test_env_kill_switch_makes_the_hook_do_nothing_at_all(tmp_path, monkeypatch,
 
 def test_kill_switch_off_values_leave_crosier_running(tmp_path, monkeypatch, capsys):
     s = Session(tmp_path)
+    _config(s, enabled=True)
     s.prompt("where is it?")
     monkeypatch.setenv("CROSIER_DISABLED", "0")
     assert _activation_only(_stop(s, monkeypatch, capsys, _Reviewer(FLAG), answer="In parser.py."))
@@ -219,6 +222,7 @@ def test_kill_switch_off_values_leave_crosier_running(tmp_path, monkeypatch, cap
 
 def test_activation_line_is_announced_once_per_session(tmp_path, monkeypatch, capsys):
     s = Session(tmp_path)
+    _config(s, enabled=True)
     s.prompt("where is it?")
     assert _activation_only(_stop(s, monkeypatch, capsys, _Reviewer(FLAG), answer="In parser.py."))
     assert s.state().announced_activation is True
@@ -240,6 +244,7 @@ def test_unrecognized_transcript_format_starts_a_cooldown_after_two(tmp_path, mo
     from crosier.errors import COOLDOWN_REVIEWS
 
     s = Session(tmp_path)
+    _config(s, enabled=True)
     s.add([{"kind": "v2-event", "payload": {"text": "hi"}} for _ in range(8)])
     reviewer = _Reviewer(FLAG)
     outs = [_stop(s, monkeypatch, capsys, reviewer) for _ in range(2)]
@@ -256,6 +261,7 @@ def test_turns_are_counted_once_per_user_turn_at_stop(tmp_path, monkeypatch, cap
     # Journal `turn` is what the per-turn benchmark joins on. A forced revision
     # is the same turn, so a Stop with stop_hook_active does not count.
     s = Session(tmp_path)
+    _config(s, enabled=True)
     s.prompt("where is it?")
     _stop(s, monkeypatch, capsys, _Reviewer(PROCEED), answer="In parser.py.")
     _stop(s, monkeypatch, capsys, _Reviewer(PROCEED), answer="In parser.py.", active=True)
@@ -267,7 +273,18 @@ def test_turns_are_counted_once_per_user_turn_at_stop(tmp_path, monkeypatch, cap
 # --- stop gate: a synchronous review of the final answer -------------------------
 
 
-def test_stop_gate_is_on_without_any_config(tmp_path, monkeypatch, capsys):
+def test_stop_gate_is_parked_without_any_config(tmp_path, monkeypatch, capsys):
+    # No .crosier.toml at all: a risky Stop gets no review, no block and no
+    # activation line.
+    s = Session(tmp_path)
+    s.prompt("fix the parser")
+    s.batch(name="Edit", target="parser.py")
+    reviewer = _Reviewer(FLAG)
+    assert _stop(s, monkeypatch, capsys, reviewer) is None
+    assert reviewer.excerpts == []
+
+
+def test_stop_gate_runs_once_enabled(tmp_path, monkeypatch, capsys):
     s = _gated_turn(tmp_path)
     reviewer = _Reviewer(FLAG)
     assert _stop(s, monkeypatch, capsys, reviewer)["decision"] == "block"
@@ -307,6 +324,7 @@ def test_stop_gate_never_reviews_a_revision_it_already_forced(tmp_path, monkeypa
 
 def test_stop_gate_costs_nothing_on_an_answer_the_prefilter_passes(tmp_path, monkeypatch, capsys):
     s = Session(tmp_path)
+    _config(s, enabled=True)
     s.prompt("where is the parser?")
     s.batch(name="Read", target="parser.py")
     reviewer = _Reviewer(FLAG)
@@ -431,6 +449,7 @@ def test_cooldown_counts_review_opportunities_not_turns(tmp_path, monkeypatch, c
     from crosier.errors import COOLDOWN_REVIEWS
 
     s = Session(tmp_path)
+    _config(s, enabled=True)
 
     def risky_turn():
         s.prompt("fix it")

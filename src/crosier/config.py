@@ -10,7 +10,7 @@ except ImportError:  # Python < 3.11: the config file is ignored, never fatal.
     tomllib = None
 
 DEFAULTS: dict = {
-    "enabled": True,
+    "enabled": False,
     "verdict_model": "sonnet",
     "verdict_effort": "low",
     "max_checks_per_session": 12,
@@ -38,7 +38,7 @@ def disabled_by_env() -> bool:
 
 @dataclass
 class CrosierConfig:
-    enabled: bool = True
+    enabled: bool = False
     verdict_model: str = "sonnet"
     # The reviewer's thinking budget, passed to `claude --effort`. The CLI
     # default measured 8,322 output tokens and 93.0s on a cap-sized excerpt.

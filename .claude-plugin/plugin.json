@@ -1,7 +1,7 @@
 {
   "name": "crosier",
   "version": "0.2.0",
-  "description": "Install-and-forget second opinion for long Claude Code sessions. When a final answer claims an outcome or follows file edits, a fresh, zero-context Claude instance reviews it at Stop and holds the turn if it finds a problem, before the answer stands.",
+  "description": "Zero-context second opinions for long Claude Code sessions. /crosier:attack sends the latest decision to a subagent that has never seen the session. An experimental Stop gate, off by default, reviews risky final answers before the turn ends.",
   "hooks": {
     "Stop": [
       {

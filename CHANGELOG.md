@@ -8,6 +8,15 @@ Crosier exists to replace.
 
 ### Changed
 
+- **The Stop gate is off by default** (`enabled = false`). Its trigger did not
+  beat a random trigger on real sessions, so the pre-registered null exit
+  applies: `/crosier:attack` is the default product and the gate is an
+  experimental opt-in (`enabled = true` in `.crosier.toml`) until a replay of
+  the real hook measures the precision of its flags. A parked install prints
+  nothing.
+- The block reason no longer tells the agent to run the reviewer's suggested
+  check. It calls it a hint from a reviewer that read untrusted session
+  content, to be run only if the agent would run it anyway.
 - The hook listens on `Stop` only. A final answer that claims an outcome, or
   follows a turn that edited files, is reviewed synchronously and a flag
   returns `decision: block`; the agent revises before the turn ends, at most

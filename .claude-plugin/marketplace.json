@@ -4,12 +4,12 @@
     "name": "adi-vsc",
     "url": "https://github.com/adi-vsc"
   },
-  "description": "Install-and-forget direction checks for long Claude Code sessions.",
+  "description": "Zero-context second opinions for long Claude Code sessions.",
   "plugins": [
     {
       "name": "crosier",
       "source": "./",
-      "description": "A fresh, zero-context Claude instance periodically reviews a structured excerpt of your session and flags drift inside the turn, before the answer is done.",
+      "description": "/crosier:attack gets a zero-context second opinion on the latest decision. An experimental Stop gate (off by default) reviews risky final answers before the turn ends.",
       "license": "MIT",
       "category": "productivity",
       "keywords": ["drift", "review", "hooks", "long-sessions"]

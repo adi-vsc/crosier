@@ -117,7 +117,7 @@ and every request re-reads that baseline.
 | Review a large or sensitive diff | `crosier-diff-review` | sonnet |
 | Label a prepared batch file (census, confirmation) | `crosier-batch-labeller` | sonnet |
 | Blind hindsight label of replayed Stop-gate turns | `crosier-hindsight-labeller` | opus |
-| Match a reviewer flag to a labelled problem | `crosier-flag-matcher` | sonnet |
+| Match a reviewer flag to a labelled problem | `crosier-flag-matcher` | opus |
 | Build or change `benchmark/**` code | `crosier-bench-engineer` | sonnet |
 | Change `src/crosier/**` or `hooks/**` | `crosier-src-engineer` | sonnet |
 | Add tests for existing behaviour | `crosier-test-writer` | sonnet |

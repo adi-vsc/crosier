@@ -4,8 +4,7 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from crosier import claude_cli
-from crosier.claude_cli import kill_active, run_claude
+from crosier.claude_cli import run_claude
 
 
 def _envelope(result="ok", is_error=False, structured=None):
@@ -152,31 +151,6 @@ def test_run_claude_kills_the_tree_on_timeout(mock_popen, mock_kill):
 @patch("crosier.claude_cli.subprocess.Popen", side_effect=FileNotFoundError())
 def test_run_claude_returns_none_when_cli_missing(mock_popen):
     assert run_claude("SYSTEM", "payload", "sonnet", 45) is None
-
-
-@patch("crosier.claude_cli.subprocess.Popen")
-def test_run_claude_clears_the_active_handle_after_success(mock_popen):
-    mock_popen.return_value = _fake_proc()
-    run_claude("SYSTEM", "payload", "sonnet", 45)
-    assert claude_cli._active is None
-
-
-@patch("crosier.claude_cli._kill_tree")
-def test_kill_active_is_a_noop_when_nothing_is_running(mock_kill):
-    claude_cli._active = None
-    kill_active()
-    mock_kill.assert_not_called()
-
-
-@patch("crosier.claude_cli._kill_tree")
-def test_kill_active_kills_the_in_flight_call(mock_kill):
-    proc = _fake_proc(alive=True)
-    claude_cli._active = proc
-    try:
-        kill_active()
-    finally:
-        claude_cli._active = None
-    mock_kill.assert_called_once_with(proc)
 
 
 @patch("crosier.claude_cli.subprocess.Popen")

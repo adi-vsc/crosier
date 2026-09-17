@@ -52,13 +52,6 @@ def test_draft_is_the_first_stop_and_final_is_the_last():
     assert row["continued_by"] == "gate"
 
 
-def test_a_continuation_from_an_async_flag_is_attributed_to_async():
-    journal = [{"event": "Stop", "stop_gate": False, "delivered_to_agent": True, "delivered_turn": 2}]
-    stops = [_stop(2, "d"), _stop(2, "f", active=True)]
-    rows = turn_rows(stops, {"d": PASS_ALL, "f": PASS_ALL}, DUE, journal)
-    assert rows[0]["continued_by"] == "async"
-
-
 def test_a_journal_entry_that_did_not_reach_the_agent_continues_nothing():
     journal = [{"event": "Stop", "stop_gate": True, "delivered_to_agent": False, "delivered_turn": 2}]
     rows = turn_rows([_stop(2, "d")], {"d": PASS_ALL}, DUE, journal)

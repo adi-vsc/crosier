@@ -63,13 +63,13 @@ The three records have different jobs and do not substitute for each other:
 `CHANGELOG.md` is release-facing and committed, `scope.md` holds live open
 questions, `LOGBOOK.md` is the append-only history including dead ends.
 
-## Check every big decision with a Sonnet subagent
+## Check every big decision with `crosier-cold-check`
 
-Before acting on a big decision, spawn a subagent with `model: sonnet` and give
-it the decision alone: the options, the choice, the reasoning, and the evidence
-with locators. No conversation history, no "we established". Ask it to attack
-the choice and return what breaks. Act on what survives, and record the kill list
-in the decision's `LOGBOOK.md` entry.
+Before acting on a big decision, spawn `crosier-cold-check` and give it the
+decision alone: the options, the choice, the reasoning, and the evidence with
+locators. No conversation history, no "we established". It attacks the choice
+and returns what breaks. Act on what survives, and record the kill list in the
+decision's `LOGBOOK.md` entry.
 
 A big decision is one that is expensive to undo or that changes what a number
 means:
@@ -88,18 +88,63 @@ reports.
 For any big change (same definition as above), in this order:
 
 1. **Stress test the plan first.** The plan, including the agent's own proposals,
-   goes to a Sonnet subagent as a quoted artifact with locators and no history.
-   The plan is rewritten around what survives before any code is written.
-2. **Run the work as a ruflo swarm.** Initialise with
-   `npx @claude-flow/cli@latest swarm init --topology hierarchical --strategy specialized`
-   and split the plan into independent workstreams that run in parallel where
-   they do not share files (`isolation: "worktree"` when they could collide).
-3. **Engineers are Sonnet; the brain is Opus.** Coding, corpus building and
-   measurement agents run with `model: sonnet` and a self-contained prompt: goal,
-   files, constraints from this document, acceptance test, what to return. Opus
-   (the main session) only plans, integrates, and judges results.
-4. **Review before merge.** Each workstream's diff gets a Sonnet review, and the
-   suite passes under `py -3 -m pytest` before it lands.
+   goes to `crosier-cold-check` as a quoted artifact with locators and no
+   history. The plan is rewritten around what survives before any code is
+   written.
+2. **Split into workstreams.** Independent workstreams run in parallel as
+   separate agents where they do not share files (`isolation: "worktree"` when
+   they could collide).
+3. **Engineers are specialist agents; the brain is Opus.** Coding, corpus
+   building and measurement go to the matching agent below. Opus (the main
+   session) only plans, integrates, and judges results.
+4. **Review before merge.** A diff of 100+ changed lines, or any change to hook
+   behaviour, reviewer isolation, `sanitize.py` or benchmark scoring, gets
+   `crosier-diff-review`. A smaller diff is read by the main session itself. The
+   suite passes under `py -3 -m pytest` before anything lands.
+
+## Subagents: use the specialist, never `general-purpose`
+
+Specialist agents live in `.claude/agents/` (local, `.claude/` is gitignored).
+Each has only the tools its job needs, skips CLAUDE.md (`omitClaudeMd`) and
+carries the rules it needs inline, caps its turns and its report length.
+Measured 2026-09-17: `crosier-locator` starts at 3.9k tokens of context where
+`general-purpose` starts at 21.7k headless and 47k in an interactive session,
+and every request re-reads that baseline.
+
+| Task | Agent | Model |
+|---|---|---|
+| Attack a big decision or plan | `crosier-cold-check` | sonnet |
+| Review a large or sensitive diff | `crosier-diff-review` | sonnet |
+| Label a prepared batch file (census, confirmation) | `crosier-batch-labeller` | sonnet |
+| Blind hindsight label of replayed Stop-gate turns | `crosier-hindsight-labeller` | opus |
+| Match a reviewer flag to a labelled problem | `crosier-flag-matcher` | sonnet |
+| Build or change `benchmark/**` code | `crosier-bench-engineer` | sonnet |
+| Change `src/crosier/**` or `hooks/**` | `crosier-src-engineer` | sonnet |
+| Add tests for existing behaviour | `crosier-test-writer` | sonnet |
+| Remove dead code or retired leftovers | `crosier-cleanup` | sonnet |
+| Where is X, what calls Y | `crosier-locator` | haiku |
+| Refresh `graphify-out/` | `graphify-updater` | sonnet |
+
+How to use them:
+- **Pass `subagent_type` and nothing else about the role.** Do not pass `model`;
+  the agent file sets it (the hindsight labeller must stay on a different model
+  from the Sonnet reviewer).
+- **The prompt carries the facts, not the rules.** Goal, exact files and line
+  locators already known, the acceptance test, what to return. Paste grep
+  results you already have; an agent that has to rediscover them pays for every
+  request after.
+- **Labelling is script first.** A script writes the batch file with its own
+  definitions and output spec; the labeller only reads it and writes verdicts.
+  One agent per batch, batches in parallel.
+- **No agent for what the main session does cheaper.** Run a benchmark or long
+  command with a background Bash call, not through an agent. Read a web page
+  with WebFetch inline. Small reads and greps stay inline.
+- **No task fits?** Add a new specialist file (tools allowlist, `omitClaudeMd:
+  true`, `maxTurns`, report cap) rather than falling back to `general-purpose`,
+  and add it to this table.
+- **Suggest `/clear` or `/compact` to the user when the topic changes.** Every
+  request re-reads the whole main context; a side question asked on top of 150k
+  tokens of unrelated work costs 150k per request.
 
 Token care applies to agents too: a corpus or transcript job extracts with a
 script first and gives a model only the small slices it must judge.

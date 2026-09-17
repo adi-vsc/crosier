@@ -172,6 +172,25 @@ def test_malformed_payload_is_ignored(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_hook_fails_open_when_something_inside_run_raises(tmp_path, monkeypatch, capsys):
+    # Not stop_gate's own try/except (test_stop_gate_fails_open_when_the_review_raises
+    # covers that) -- this is main()'s outer catch-all for a crash anywhere else in
+    # run(), e.g. a corrupted state file blowing up load_state.
+    s = _gated_turn(tmp_path)
+    monkeypatch.setattr(hook, "load_state", lambda session_id: (_ for _ in ()).throw(RuntimeError("boom")))
+    payload = {
+        "hook_event_name": "Stop",
+        "cwd": str(s.root),
+        "session_id": s.session_id,
+        "transcript_path": str(s.transcript),
+        "stop_hook_active": False,
+        "last_assistant_message": "Fixed — all tests pass.",
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert hook.main() == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_disabled_config_produces_no_output_and_no_review(tmp_path, monkeypatch, capsys):
     s = _gated_turn(tmp_path, enabled=False)
     reviewer = _Reviewer(FLAG)

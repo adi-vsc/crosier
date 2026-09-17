@@ -41,8 +41,6 @@ def _latest_session() -> str | None:
 
 
 def _describe(entry: dict) -> str:
-    if entry.get("status") == "stale":
-        return "verdict discarded - the session moved on before it came back"
     if entry.get("status") != "flag":
         return "no issues found"
     parts = [entry.get("category") or "other"]

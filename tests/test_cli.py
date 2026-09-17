@@ -78,15 +78,6 @@ def test_bare_invocation_prints_help_rather_than_failing(capsys):
     assert "usage: crosier" in capsys.readouterr().out
 
 
-def test_report_shows_a_check_that_was_thrown_away_as_stale(capsys):
-    # A verdict that came back after the session moved on still cost a call.
-    # A report that hides it under-counts what Crosier spent.
-    save_state("s1", SessionState(checks_run=1))
-    record_check("s1", {"turn": 5, "status": "stale", "delivered_to_agent": False})
-    assert main(["report"]) == 0
-    assert "discarded" in capsys.readouterr().out
-
-
 def test_report_shows_what_the_reviewer_itself_spent(tmp_path, monkeypatch, capsys):
     # scope.md open question: a plugin whose whole pitch is saving a session
     # from wasted work has to be able to say what it cost to run.

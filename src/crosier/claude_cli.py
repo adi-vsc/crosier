@@ -1,10 +1,8 @@
 """The single place Crosier shells out to `claude -p`.
 
-Every headless call goes through here so that exactly one process object is
-ever in flight per worker, and so that object stays reachable. A detached
-worker that hits its deadline must be able to kill the CLI it started —
-otherwise force-quitting the main session leaves a headless `claude` (and its
-node children) resident. `kill_active()` is that lever.
+Every headless call goes through here, so a call that hits its own timeout
+kills the whole CLI process tree it started; otherwise the headless `claude`
+(and its node children) is left resident.
 """
 
 import json
@@ -12,15 +10,10 @@ import os
 import signal
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 # One bad call must not be able to run up a bill on its own.
 MAX_BUDGET_USD = 0.50
-
-_active_lock = threading.Lock()
-_active: subprocess.Popen | None = None
-
 
 def _spawn_kwargs() -> dict:
     """Put the child in its own process group so the whole tree can be killed.
@@ -50,15 +43,6 @@ def _kill_tree(proc: subprocess.Popen) -> None:
             proc.kill()
         except OSError:
             pass
-
-
-def kill_active() -> None:
-    """Kill whatever headless call is running right now, if any. Safe to call
-    from another thread (the worker watchdog does exactly that)."""
-    with _active_lock:
-        proc = _active
-    if proc is not None:
-        _kill_tree(proc)
 
 
 def _neutral_cwd() -> str:
@@ -98,7 +82,6 @@ def run_claude(
     93.0s, which is past the worker deadline that is supposed to bound it. The
     level belongs to the caller.
     """
-    global _active
     argv = [
         "claude",
         "-p",
@@ -143,8 +126,6 @@ def run_claude(
     except (FileNotFoundError, OSError):
         return None
 
-    with _active_lock:
-        _active = proc
     try:
         stdout, _ = proc.communicate(stdin_text, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -157,9 +138,6 @@ def run_claude(
     except OSError:
         _kill_tree(proc)
         return None
-    finally:
-        with _active_lock:
-            _active = None
 
     if proc.returncode != 0:
         return None

@@ -22,5 +22,6 @@ LOGBOOK.md
 .swarm/
 benchmark/sweeps/
 benchmark/corpus/out/
+benchmark/replay/out*/
 .claude/
 scratch_signals.json
